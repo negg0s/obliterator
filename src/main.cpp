@@ -11,6 +11,7 @@
 #include "obliterator/profile.hpp"
 #include "obliterator/registry_cleaner.hpp"
 #include "obliterator/report.hpp"
+#include "obliterator/restore_point.hpp"
 #include "obliterator/resume.hpp"
 #include "obliterator/safe_mode.hpp"
 #include "obliterator/safety.hpp"
@@ -20,6 +21,9 @@
 #include "obliterator/uninstaller.hpp"
 #include "obliterator/unlocker.hpp"
 #include "obliterator/uwp.hpp"
+#include "obliterator/quarantine.hpp"
+#include "obliterator/audit.hpp"
+#include "obliterator/crypto.hpp"
 #include "obliterator/wiper.hpp"
 
 #include <fcntl.h>
@@ -47,6 +51,66 @@ int wmain(int argc, wchar_t* argv[]) {
     Logger::set_verbose(options.verbose);
     if (options.json) {
         Logger::set_json_mode(true);
+    }
+
+    if (options.list_sessions) {
+        auto sessions = QuarantineManager::list_sessions();
+        if (sessions.empty()) {
+            std::wcout << L"No quarantine sessions found.\n";
+            return ExitCode::Success;
+        }
+        std::wcout << L"\nQuarantine Sessions (" << sessions.size() << L"):\n";
+        std::wcout << L"--------------------------------------------------------------------------------\n";
+        for (const auto& s : sessions) {
+            std::wcout << L" ID:       " << s.session_id << L"\n"
+                       << L" Date:     " << s.timestamp << L"\n"
+                       << L" Target:   " << s.target_name << L" (" << s.target_root << L")\n"
+                       << L" Files:    " << s.files_count << L" (" << FileWiper::format_bytes(s.total_bytes) << L")\n"
+                       << L" Registry: " << s.registry_keys_count << L" keys saved\n"
+                       << L"--------------------------------------------------------------------------------\n";
+        }
+        return ExitCode::Success;
+    }
+
+    if (!options.restore_session_id.empty()) {
+        enable_required_privileges();
+        auto res = QuarantineManager::restore_session(options.restore_session_id);
+        if (!res) {
+            Logger::error(L"Failed to restore session: " + res.error().message());
+            return ExitCode::Error;
+        }
+        const auto& rep = res.value();
+        std::wcout << L"\nRestore Summary for " << rep.session_id << L":\n"
+                   << L" - Files restored:     " << rep.files_restored << L"\n"
+                   << L" - ACLs restored:      " << rep.acls_restored << L"\n"
+                   << L" - Timestamps updated: " << rep.timestamps_restored << L"\n"
+                   << L" - Registry keys:      " << rep.registry_keys_restored << L"\n";
+        return rep.success ? ExitCode::Success : ExitCode::Error;
+    }
+
+    if (!options.purge_quarantine_arg.empty()) {
+        enable_required_privileges();
+        if (options.purge_quarantine_arg.starts_with(L"--older-than ")) {
+            std::wstring days_str = options.purge_quarantine_arg.substr(13);
+            if (!days_str.empty() && (days_str.back() == L'd' || days_str.back() == L'D')) {
+                days_str.pop_back();
+            }
+            uint32_t days = static_cast<uint32_t>(std::stoul(days_str));
+            auto res = QuarantineManager::purge_older_than(days);
+            if (res) {
+                std::wcout << L"Purged " << res.value() << L" quarantine session(s) older than " << days << L" days.\n";
+                return ExitCode::Success;
+            }
+            return ExitCode::Error;
+        } else {
+            auto res = QuarantineManager::purge_session(options.purge_quarantine_arg);
+            if (res) {
+                std::wcout << L"Purged quarantine session: " << options.purge_quarantine_arg << L"\n";
+                return ExitCode::Success;
+            }
+            Logger::error(L"Failed to purge quarantine session: " + res.error().message());
+            return ExitCode::Error;
+        }
     }
 
     if (options.resume) {
@@ -379,6 +443,17 @@ int wmain(int argc, wchar_t* argv[]) {
     final_report.target_root = target.root_path;
     final_report.artifacts = scored_artifacts;
 
+    int64_t restore_pt_seq = 0;
+    if (!options.no_restore_point && !options.dry_run) {
+        Logger::info(L"Creating System Restore Point...");
+        auto rp_res = RestorePointManager::create_restore_point(target.name, options.require_restore_point);
+        if (!rp_res) {
+            Logger::error(L"Failed to create System Restore Point: " + rp_res.error().message());
+            return ExitCode::Error;
+        }
+        restore_pt_seq = rp_res.value().sequence_number;
+    }
+
     // Phase 1: Defuse restart and watchdog mechanisms
     Logger::info(L"Defusing restart mechanisms, service failure actions, and tasks...");
     const auto defuse_report = RecoveryDefuser::defuse_all(
@@ -424,27 +499,41 @@ int wmain(int argc, wchar_t* argv[]) {
         }
     }
 
-    // Phase 6: Wipe physical directory tree
-    Logger::info(L"Deleting physical directory tree...");
+    // Phase 6: Wipe physical directory tree or Quarantine
     PhysicalWipeReport wipe_report;
-    const bool compute_sizes = options.json || !options.yes;
     Result<void> wipe_res = Result<void>::success();
-    if (!target.root_path.empty()) {
-        wipe_res = FileWiper::wipe_physical_tree(target.root_path, wipe_report, compute_sizes);
-    }
 
-    final_report.files_deleted = wipe_report.files_deleted;
-    final_report.directories_deleted = wipe_report.directories_deleted;
-    final_report.junctions_deleted = wipe_report.junctions_deleted;
-    final_report.acl_resets = wipe_report.acl_resets;
-    final_report.bytes_freed = wipe_report.bytes_freed;
-    final_report.files_scheduled_for_reboot = wipe_report.files_scheduled_for_reboot;
-    final_report.directories_scheduled_for_reboot = wipe_report.directories_scheduled_for_reboot;
+    if (options.quarantine) {
+        Logger::info(L"Quarantining target files instead of deleting...");
+        auto q_res = QuarantineManager::quarantine_target(target);
+        if (!q_res) {
+            Logger::error(L"Quarantine failed: " + q_res.error().message());
+            wipe_res = q_res.error();
+        } else {
+            const auto& q_rep = q_res.value();
+            final_report.files_deleted = q_rep.files_quarantined;
+            final_report.bytes_freed = q_rep.bytes_quarantined;
+        }
+    } else {
+        Logger::info(L"Deleting physical directory tree...");
+        const bool compute_sizes = options.json || !options.yes;
+        if (!target.root_path.empty()) {
+            wipe_res = FileWiper::wipe_physical_tree(target.root_path, wipe_report, compute_sizes);
+        }
 
-    if (wipe_report.reboot_required) {
-        final_report.reboot_required = true;
-        for (const auto& path : wipe_report.failed_paths) {
-            final_report.pending_reboot_items.push_back(path);
+        final_report.files_deleted = wipe_report.files_deleted;
+        final_report.directories_deleted = wipe_report.directories_deleted;
+        final_report.junctions_deleted = wipe_report.junctions_deleted;
+        final_report.acl_resets = wipe_report.acl_resets;
+        final_report.bytes_freed = wipe_report.bytes_freed;
+        final_report.files_scheduled_for_reboot = wipe_report.files_scheduled_for_reboot;
+        final_report.directories_scheduled_for_reboot = wipe_report.directories_scheduled_for_reboot;
+
+        if (wipe_report.reboot_required) {
+            final_report.reboot_required = true;
+            for (const auto& path : wipe_report.failed_paths) {
+                final_report.pending_reboot_items.push_back(path);
+            }
         }
     }
 
@@ -555,6 +644,10 @@ int wmain(int argc, wchar_t* argv[]) {
         final_report.print_json();
     } else {
         final_report.print_text();
+    }
+
+    if (restore_pt_seq > 0) {
+        RestorePointManager::finish_restore_point(restore_pt_seq, !final_report.success);
     }
 
     return final_report.exit_code;

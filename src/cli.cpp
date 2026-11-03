@@ -30,6 +30,12 @@ void CommandLineParser::print_usage() {
                << L"  --include-system-profiles Include service accounts (SYSTEM, LocalService, NetworkService)\n"
                << L"  --resume               Resume cleanup after system reboot from saved state\n"
                << L"  --safe-mode-plan       Display Safe Mode removal plan and boot configuration\n"
+               << L"  --quarantine           Move files to quarantine instead of deleting\n"
+               << L"  --no-restore-point     Skip creating a system restore point\n"
+               << L"  --require-restore-point Abort if system restore point creation fails\n"
+               << L"  --list-sessions        List past quarantine and cleanup sessions\n"
+               << L"  --restore <id>         Restore files, ACLs, and registry keys from quarantine session\n"
+               << L"  --purge-quarantine <id|--older-than Nd> Purge quarantine session or sessions older than N days\n"
                << L"  --install-menu         Add 'Force Obliterate' to folder context menu in HKCU\n"
                << L"  --uninstall-menu       Remove 'Force Obliterate' from folder context menu\n"
                << L"  --help, -h             Display this help message\n";
@@ -101,6 +107,36 @@ Result<CommandLineOptions> CommandLineParser::parse(const std::vector<std::wstri
             options.resume = true;
         } else if (arg == L"--safe-mode-plan") {
             options.safe_mode_plan = true;
+        } else if (arg == L"--quarantine") {
+            options.quarantine = true;
+        } else if (arg == L"--no-restore-point") {
+            options.no_restore_point = true;
+        } else if (arg == L"--require-restore-point") {
+            options.require_restore_point = true;
+        } else if (arg == L"--list-sessions") {
+            options.list_sessions = true;
+        } else if (arg == L"--restore") {
+            if (i + 1 < args.size() && !args[i + 1].starts_with(L"-")) {
+                options.restore_session_id = args[++i];
+            } else {
+                Logger::error(L"Missing session id argument for --restore");
+                return Win32Error::from_code(ERROR_INVALID_PARAMETER);
+            }
+        } else if (arg == L"--purge-quarantine") {
+            if (i + 1 < args.size()) {
+                if (args[i + 1] == L"--older-than" && i + 2 < args.size()) {
+                    options.purge_quarantine_arg = L"--older-than " + args[i + 2];
+                    i += 2;
+                } else if (!args[i + 1].starts_with(L"-")) {
+                    options.purge_quarantine_arg = args[++i];
+                } else {
+                    Logger::error(L"Invalid argument for --purge-quarantine");
+                    return Win32Error::from_code(ERROR_INVALID_PARAMETER);
+                }
+            } else {
+                Logger::error(L"Missing argument for --purge-quarantine");
+                return Win32Error::from_code(ERROR_INVALID_PARAMETER);
+            }
         } else if (arg == L"--install-menu") {
             options.install_menu = true;
         } else if (arg == L"--uninstall-menu") {

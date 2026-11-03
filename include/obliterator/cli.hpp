@@ -32,6 +32,12 @@ struct CommandLineOptions {
     bool include_system_profiles{false};
     bool resume{false};
     bool safe_mode_plan{false};
+    bool quarantine{false};
+    bool no_restore_point{false};
+    bool require_restore_point{false};
+    bool list_sessions{false};
+    std::wstring restore_session_id;
+    std::wstring purge_quarantine_arg;
 };
 
 class CommandLineParser {
