@@ -1,12 +1,39 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(obliterator LANGUAGES CXX)
+project(obliterator
+    VERSION 0.2.0
+    LANGUAGES CXX RC
+)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Static CRT for all configurations
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 add_compile_definitions(UNICODE _UNICODE)
+
+if(MSVC)
+    add_compile_options(
+        /W4
+        /WX
+        /permissive-
+        /utf-8
+        /EHsc
+        /GS
+        /guard:cf
+        $<$<CONFIG:Release>:/Qspectre>
+    )
+
+    add_link_options(
+        /GUARD:CF
+        /DYNAMICBASE
+        /HIGHENTROPYVA
+        $<$<NOT:$<STREQUAL:${CMAKE_SYSTEM_PROCESSOR},ARM64>>:/CETCOMPAT>
+        /Brepro
+    )
+endif()
 
 add_library(obliterator_core STATIC
     include/obliterator/app_type.hpp
@@ -106,9 +133,16 @@ if(MSVC)
     )
 endif()
 
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/version.rc.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/version.rc"
+    @ONLY
+)
+
 add_executable(obliterator
     src/main.cpp
     src/app.manifest
+    "${CMAKE_CURRENT_BINARY_DIR}/version.rc"
 )
 
 target_link_libraries(obliterator PRIVATE
@@ -116,14 +150,6 @@ target_link_libraries(obliterator PRIVATE
 )
 
 if(MSVC)
-    target_compile_options(obliterator PRIVATE
-        /W4
-        /WX
-        /permissive-
-        /utf-8
-        /EHsc
-    )
-
     set_target_properties(obliterator PROPERTIES
         LINK_FLAGS "/MANIFESTUAC:\"level='asInvoker' uiAccess='false'\""
     )
