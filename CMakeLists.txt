@@ -215,6 +215,7 @@ endif()
 
 option(ENABLE_FUZZING "Build libFuzzer targets" OFF)
 if(ENABLE_FUZZING AND MSVC)
+    set_target_properties(obliterator test_blocker obliterator_tests bench PROPERTIES EXCLUDE_FROM_ALL TRUE)
     target_compile_options(obliterator_core PRIVATE /fsanitize=fuzzer)
 
     add_executable(fuzz_service_image_path tests/fuzz/fuzz_service_image_path.cpp)
