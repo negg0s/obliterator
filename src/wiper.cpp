@@ -8,10 +8,118 @@
 #include <algorithm>
 #include <atomic>
 #include <cwchar>
+#include <iterator>
+#include <string_view>
 #include <thread>
 #include <vector>
 
+#ifndef FILE_DISPOSITION_FLAG_DELETE
+#define FILE_DISPOSITION_FLAG_DELETE 0x00000001
+#endif
+#ifndef FILE_DISPOSITION_FLAG_POSIX_SEMANTICS
+#define FILE_DISPOSITION_FLAG_POSIX_SEMANTICS 0x00000002
+#endif
+#ifndef FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE
+#define FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE 0x00000010
+#endif
+
 namespace obliterator {
+
+static bool delete_file_fast(const std::wstring& ext_path, DWORD& out_error) {
+    UniqueHandle hFile(CreateFileW(
+        ext_path.c_str(),
+        DELETE | SYNCHRONIZE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        nullptr
+    ));
+
+    if (hFile) {
+        FILE_DISPOSITION_INFO_EX disp{};
+        disp.Flags = FILE_DISPOSITION_FLAG_DELETE |
+                     FILE_DISPOSITION_FLAG_POSIX_SEMANTICS |
+                     FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE;
+        if (SetFileInformationByHandle(hFile.get(), FileDispositionInfoEx, &disp, sizeof(disp))) {
+            return true;
+        }
+
+        FILE_DISPOSITION_INFO disp_std{};
+        disp_std.DeleteFile = TRUE;
+        if (SetFileInformationByHandle(hFile.get(), FileDispositionInfo, &disp_std, sizeof(disp_std))) {
+            return true;
+        }
+    }
+
+    UniqueHandle hDelete(CreateFileW(
+        ext_path.c_str(),
+        DELETE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_DELETE_ON_CLOSE | FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        nullptr
+    ));
+    if (hDelete) {
+        return true;
+    }
+
+    FileWiper::strip_file_attributes(ext_path);
+    if (DeleteFileW(ext_path.c_str())) {
+        return true;
+    }
+
+    out_error = GetLastError();
+    if (out_error == ERROR_ACCESS_DENIED) {
+        if (FileWiper::take_ownership_and_reset_dacl(ext_path)) {
+            FileWiper::strip_file_attributes(ext_path);
+            if (DeleteFileW(ext_path.c_str())) {
+                return true;
+            }
+            out_error = GetLastError();
+        }
+    }
+    return false;
+}
+
+static bool delete_directory_fast(const std::wstring& ext_path, DWORD& out_error) {
+    UniqueHandle hDir(CreateFileW(
+        ext_path.c_str(),
+        DELETE | SYNCHRONIZE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        nullptr
+    ));
+    if (hDir) {
+        FILE_DISPOSITION_INFO_EX disp{};
+        disp.Flags = FILE_DISPOSITION_FLAG_DELETE |
+                     FILE_DISPOSITION_FLAG_POSIX_SEMANTICS |
+                     FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE;
+        if (SetFileInformationByHandle(hDir.get(), FileDispositionInfoEx, &disp, sizeof(disp))) {
+            return true;
+        }
+    }
+
+    FileWiper::strip_file_attributes(ext_path);
+    if (RemoveDirectoryW(ext_path.c_str())) {
+        return true;
+    }
+
+    out_error = GetLastError();
+    if (out_error == ERROR_ACCESS_DENIED) {
+        if (FileWiper::take_ownership_and_reset_dacl(ext_path)) {
+            FileWiper::strip_file_attributes(ext_path);
+            if (RemoveDirectoryW(ext_path.c_str())) {
+                return true;
+            }
+            out_error = GetLastError();
+        }
+    }
+    return false;
+}
 
 std::wstring FileWiper::ensure_extended_path(const std::wstring& path) {
     if (path.starts_with(L"\\\\?\\")) {
@@ -100,61 +208,31 @@ Result<void> FileWiper::take_ownership_and_reset_dacl(const std::wstring& path) 
 
 Result<void> FileWiper::delete_file_lazy(const std::wstring& path, WipeReport& report) {
     const std::wstring ext = ensure_extended_path(path);
-    strip_file_attributes(ext);
-
-    if (DeleteFileW(ext.c_str())) {
+    DWORD err = 0;
+    if (delete_file_fast(ext, err)) {
         report.files_deleted++;
         return Result<void>::success();
     }
-
-    DWORD err = GetLastError();
-    if (err == ERROR_ACCESS_DENIED) {
-        auto acl_res = take_ownership_and_reset_dacl(ext);
-        if (acl_res) {
-            report.acl_resets++;
-            strip_file_attributes(ext);
-            if (DeleteFileW(ext.c_str())) {
-                report.files_deleted++;
-                return Result<void>::success();
-            }
-            err = GetLastError();
-        }
-    }
-
     report.failed_paths.push_back(path);
-    return Win32Error::from_code(err);
+    return Win32Error::from_code(err != 0 ? err : GetLastError());
 }
 
 Result<void> FileWiper::delete_directory_lazy(const std::wstring& path, WipeReport& report) {
     const std::wstring ext = ensure_extended_path(path);
-    strip_file_attributes(ext);
-
-    if (RemoveDirectoryW(ext.c_str())) {
+    DWORD err = 0;
+    if (delete_directory_fast(ext, err)) {
         report.directories_deleted++;
         return Result<void>::success();
     }
-
-    DWORD err = GetLastError();
-    if (err == ERROR_ACCESS_DENIED) {
-        auto acl_res = take_ownership_and_reset_dacl(ext);
-        if (acl_res) {
-            report.acl_resets++;
-            strip_file_attributes(ext);
-            if (RemoveDirectoryW(ext.c_str())) {
-                report.directories_deleted++;
-                return Result<void>::success();
-            }
-            err = GetLastError();
-        }
-    }
-
     report.failed_paths.push_back(path);
-    return Win32Error::from_code(err);
+    return Win32Error::from_code(err != 0 ? err : GetLastError());
 }
 
-Result<void> FileWiper::wipe_directory_tree(const std::wstring& target_root, WipeReport& report) {
+Result<void> FileWiper::wipe_directory_tree(const std::wstring& target_root,
+                                            WipeReport& report,
+                                            bool compute_sizes) {
     PhysicalWipeReport phys_report;
-    auto res = wipe_physical_tree(target_root, phys_report);
+    auto res = wipe_physical_tree(target_root, phys_report, compute_sizes);
 
     report.files_deleted = phys_report.files_deleted;
     report.directories_deleted = phys_report.directories_deleted;
@@ -182,7 +260,9 @@ std::wstring FileWiper::format_bytes(uint64_t bytes) {
 }
 
 Result<void> FileWiper::wipe_physical_tree(const std::wstring& target_root,
-                                           PhysicalWipeReport& report) {
+                                           PhysicalWipeReport& report,
+                                           bool compute_sizes,
+                                           size_t thread_count) {
     const std::wstring norm_target = SafetyValidator::normalize_path(target_root);
     auto safe = SafetyValidator::validate_path(norm_target);
     if (!safe) {
@@ -210,8 +290,13 @@ Result<void> FileWiper::wipe_physical_tree(const std::wstring& target_root,
         bool is_reparse{false};
     };
 
+    struct FolderBatch {
+        std::wstring folder_path;
+        std::vector<FileEntry> files;
+    };
+
     std::vector<DirEntry> all_dirs;
-    std::vector<FileEntry> files;
+    std::vector<FolderBatch> folder_batches;
 
     struct ScopedTimer {
         LARGE_INTEGER freq;
@@ -234,72 +319,125 @@ Result<void> FileWiper::wipe_physical_tree(const std::wstring& target_root,
         if ((root_attrs & FILE_ATTRIBUTE_DIRECTORY) != 0) {
             all_dirs.push_back({norm_target, true});
         } else {
-            files.push_back({norm_target, 0, true});
+            folder_batches.push_back(FolderBatch{norm_target, {{norm_target, 0, true}}});
         }
     } else if ((root_attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) {
-        ULARGE_INTEGER sz{};
-        UniqueHandle h(CreateFileW(
-            ext_root.c_str(),
-            GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            nullptr,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            nullptr
-        ));
-        if (h) {
-            sz.LowPart = GetFileSize(h.get(), &sz.HighPart);
+        uint64_t sz = 0;
+        if (compute_sizes) {
+            ULARGE_INTEGER u_sz{};
+            UniqueHandle h(CreateFileW(
+                ext_root.c_str(),
+                GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                nullptr
+            ));
+            if (h) {
+                u_sz.LowPart = GetFileSize(h.get(), &u_sz.HighPart);
+                sz = u_sz.QuadPart;
+            }
         }
-        files.push_back({norm_target, sz.QuadPart, false});
+        folder_batches.push_back(FolderBatch{norm_target, {{norm_target, sz, false}}});
     } else {
         std::vector<std::wstring> dir_stack;
         all_dirs.push_back({norm_target, false});
         dir_stack.push_back(norm_target);
+
+        constexpr DWORD kDirBufferSize = 64 * 1024;
+        std::vector<BYTE> dir_buffer(kDirBufferSize);
 
         while (!dir_stack.empty()) {
             std::wstring curr = std::move(dir_stack.back());
             dir_stack.pop_back();
 
             const std::wstring ext_curr = ensure_extended_path(curr);
-            const std::wstring pattern = ext_curr + L"\\*";
-            WIN32_FIND_DATAW fd{};
-            UniqueFindHandle find_h(FindFirstFileExW(
-                pattern.c_str(),
-                FindExInfoBasic,
-                &fd,
-                FindExSearchNameMatch,
+            UniqueHandle hDir(CreateFileW(
+                ext_curr.c_str(),
+                FILE_LIST_DIRECTORY | SYNCHRONIZE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 nullptr,
-                FIND_FIRST_EX_LARGE_FETCH
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS,
+                nullptr
             ));
-            if (!find_h) {
-                continue;
-            }
 
-            do {
-                if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) {
+            if (!hDir) {
+                DWORD err = GetLastError();
+                if (err == ERROR_ACCESS_DENIED) {
+                    if (take_ownership_and_reset_dacl(ext_curr)) {
+                        hDir.reset(CreateFileW(
+                            ext_curr.c_str(),
+                            FILE_LIST_DIRECTORY | SYNCHRONIZE,
+                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                            nullptr,
+                            OPEN_EXISTING,
+                            FILE_FLAG_BACKUP_SEMANTICS,
+                            nullptr
+                        ));
+                    }
+                }
+                if (!hDir) {
                     continue;
                 }
+            }
 
-                const std::wstring child = curr + L"\\" + fd.cFileName;
-                const bool is_reparse = (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-                const bool is_dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            std::vector<FileEntry> current_folder_files;
 
-                if (is_reparse) {
-                    if (is_dir) {
-                        all_dirs.push_back({child, true});
-                    } else {
-                        files.push_back({child, 0, true});
+            while (GetFileInformationByHandleEx(
+                hDir.get(),
+                FileIdBothDirectoryInfo,
+                dir_buffer.data(),
+                static_cast<DWORD>(dir_buffer.size())
+            )) {
+                auto* info = reinterpret_cast<const FILE_ID_BOTH_DIR_INFO*>(dir_buffer.data());
+                while (info != nullptr) {
+                    std::wstring_view name(info->FileName, info->FileNameLength / sizeof(wchar_t));
+                    if (name != L"." && name != L"..") {
+                        const bool is_reparse = (info->FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+                        const bool is_dir = (info->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                        const std::wstring child = curr + L"\\" + std::wstring(name);
+
+                        if (is_reparse) {
+                            if (is_dir) {
+                                all_dirs.push_back({child, true});
+                            } else {
+                                current_folder_files.push_back({child, 0, true});
+                            }
+                        } else if (is_dir) {
+                            all_dirs.push_back({child, false});
+                            dir_stack.push_back(child);
+                        } else {
+                            const uint64_t file_sz = compute_sizes ? static_cast<uint64_t>(info->EndOfFile.QuadPart) : 0;
+                            current_folder_files.push_back({child, file_sz, false});
+                        }
                     }
-                } else if (is_dir) {
-                    all_dirs.push_back({child, false});
-                    dir_stack.push_back(child);
-                } else {
-                    ULARGE_INTEGER sz{};
-                    sz.LowPart = fd.nFileSizeLow;
-                    sz.HighPart = fd.nFileSizeHigh;
-                    files.push_back({child, sz.QuadPart, false});
+
+                    if (info->NextEntryOffset == 0) {
+                        break;
+                    }
+                    info = reinterpret_cast<const FILE_ID_BOTH_DIR_INFO*>(
+                        reinterpret_cast<const BYTE*>(info) + info->NextEntryOffset
+                    );
                 }
-            } while (FindNextFileW(find_h.get(), &fd));
+            }
+
+            if (!current_folder_files.empty()) {
+                constexpr size_t kMaxChunk = 512;
+                if (current_folder_files.size() > kMaxChunk) {
+                    for (size_t start = 0; start < current_folder_files.size(); start += kMaxChunk) {
+                        size_t count = std::min(kMaxChunk, current_folder_files.size() - start);
+                        std::vector<FileEntry> chunk(
+                            std::make_move_iterator(current_folder_files.begin() + start),
+                            std::make_move_iterator(current_folder_files.begin() + start + count)
+                        );
+                        folder_batches.push_back(FolderBatch{curr, std::move(chunk)});
+                    }
+                } else {
+                    folder_batches.push_back(FolderBatch{curr, std::move(current_folder_files)});
+                }
+            }
         }
     }
 
@@ -307,61 +445,50 @@ Result<void> FileWiper::wipe_physical_tree(const std::wstring& target_root,
 
     ScopedTimer del_timer;
 
-    std::sort(files.begin(), files.end(), [](const FileEntry& a, const FileEntry& b) {
-        return a.path < b.path;
-    });
+    const size_t num_batches = folder_batches.size();
+    if (num_batches > 0) {
+        size_t actual_threads = thread_count;
+        if (actual_threads == 0) {
+            const unsigned int hw = std::thread::hardware_concurrency();
+            actual_threads = std::max(1u, std::min(hw == 0 ? 4u : hw, 12u));
+        }
+        actual_threads = std::min(actual_threads, num_batches);
 
-    const size_t num_files = files.size();
-    if (num_files > 0) {
-        const unsigned int hw = std::thread::hardware_concurrency();
-        const size_t max_threads = std::max(1u, std::min(hw == 0 ? 4u : hw, 8u));
-        const size_t actual_threads = std::min(max_threads, num_files);
-
-        struct FileResult {
-            bool deleted{false};
-            bool scheduled_for_reboot{false};
-            bool acl_reset{false};
-            DWORD error_code{0};
+        struct WorkerThreadStats {
+            size_t files_deleted{0};
+            size_t junctions_deleted{0};
+            size_t acl_resets{0};
+            uint64_t bytes_freed{0};
+            size_t files_scheduled_for_reboot{0};
+            std::vector<std::wstring> failed_paths;
         };
 
-        std::vector<FileResult> results(num_files);
-        std::atomic<size_t> next_index{0};
+        std::vector<WorkerThreadStats> thread_stats(actual_threads);
+        std::atomic<size_t> next_batch_idx{0};
 
-        auto worker = [&]() {
+        auto worker = [&](size_t thread_id) {
+            auto& stats = thread_stats[thread_id];
             while (true) {
-                const size_t idx = next_index.fetch_add(1, std::memory_order_relaxed);
-                if (idx >= num_files) {
+                const size_t batch_idx = next_batch_idx.fetch_add(1, std::memory_order_relaxed);
+                if (batch_idx >= num_batches) {
                     break;
                 }
 
-                const auto& file = files[idx];
-                auto& res = results[idx];
-                const std::wstring ext = ensure_extended_path(file.path);
-
-                strip_file_attributes(ext);
-                if (DeleteFileW(ext.c_str())) {
-                    res.deleted = true;
-                    continue;
-                }
-
-                DWORD err = GetLastError();
-                if (err == ERROR_ACCESS_DENIED) {
-                    auto acl_res = take_ownership_and_reset_dacl(ext);
-                    if (acl_res) {
-                        res.acl_reset = true;
-                        strip_file_attributes(ext);
-                        if (DeleteFileW(ext.c_str())) {
-                            res.deleted = true;
-                            continue;
+                const auto& batch = folder_batches[batch_idx];
+                for (const auto& file : batch.files) {
+                    const std::wstring ext = ensure_extended_path(file.path);
+                    DWORD err = 0;
+                    if (delete_file_fast(ext, err)) {
+                        stats.files_deleted++;
+                        stats.bytes_freed += file.size;
+                        if (file.is_reparse) {
+                            stats.junctions_deleted++;
                         }
-                        err = GetLastError();
+                    } else if (MoveFileExW(ext.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT)) {
+                        stats.files_scheduled_for_reboot++;
+                    } else {
+                        stats.failed_paths.push_back(file.path);
                     }
-                }
-
-                if (MoveFileExW(ext.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT)) {
-                    res.scheduled_for_reboot = true;
-                } else {
-                    res.error_code = (err != 0) ? err : GetLastError();
                 }
             }
         };
@@ -369,7 +496,7 @@ Result<void> FileWiper::wipe_physical_tree(const std::wstring& target_root,
         std::vector<std::thread> pool;
         pool.reserve(actual_threads);
         for (size_t t = 0; t < actual_threads; ++t) {
-            pool.emplace_back(worker);
+            pool.emplace_back(worker, t);
         }
         for (auto& th : pool) {
             if (th.joinable()) {
@@ -377,42 +504,29 @@ Result<void> FileWiper::wipe_physical_tree(const std::wstring& target_root,
             }
         }
 
-        for (size_t i = 0; i < num_files; ++i) {
-            const auto& file = files[i];
-            const auto& res = results[i];
-
-            if (res.acl_reset) {
-                report.acl_resets++;
-            }
-
-            if (res.deleted) {
-                report.files_deleted++;
-                report.bytes_freed += file.size;
-                if (file.is_reparse) {
-                    report.junctions_deleted++;
-                }
-            } else if (res.scheduled_for_reboot) {
-                report.files_scheduled_for_reboot++;
+        for (const auto& s : thread_stats) {
+            report.files_deleted += s.files_deleted;
+            report.junctions_deleted += s.junctions_deleted;
+            report.acl_resets += s.acl_resets;
+            report.bytes_freed += s.bytes_freed;
+            report.files_scheduled_for_reboot += s.files_scheduled_for_reboot;
+            if (s.files_scheduled_for_reboot > 0) {
                 report.reboot_required = true;
-                Logger::debug(L"File locked, scheduled for reboot removal: " + file.path);
-            } else {
-                report.failed_paths.push_back(file.path);
-                Logger::error(L"Failed to delete file: " + file.path + L" (error " +
-                             std::to_wstring(res.error_code) + L")");
+            }
+            for (const auto& fail : s.failed_paths) {
+                report.failed_paths.push_back(fail);
             }
         }
     }
 
-    // Sort directories deepest first so child directories are removed before parents
     std::sort(all_dirs.begin(), all_dirs.end(), [](const DirEntry& a, const DirEntry& b) {
         return a.path.size() > b.path.size();
     });
 
     for (const auto& dir : all_dirs) {
         const std::wstring ext = ensure_extended_path(dir.path);
-
-        strip_file_attributes(ext);
-        if (RemoveDirectoryW(ext.c_str())) {
+        DWORD err = 0;
+        if (delete_directory_fast(ext, err)) {
             report.directories_deleted++;
             if (dir.is_reparse) {
                 report.junctions_deleted++;
@@ -420,31 +534,11 @@ Result<void> FileWiper::wipe_physical_tree(const std::wstring& target_root,
             continue;
         }
 
-        DWORD err = GetLastError();
-        if (err == ERROR_ACCESS_DENIED) {
-            auto acl_res = take_ownership_and_reset_dacl(ext);
-            if (acl_res) {
-                report.acl_resets++;
-                strip_file_attributes(ext);
-                if (RemoveDirectoryW(ext.c_str())) {
-                    report.directories_deleted++;
-                    if (dir.is_reparse) {
-                        report.junctions_deleted++;
-                    }
-                    continue;
-                }
-                err = GetLastError();
-            }
-        }
-
         if (MoveFileExW(ext.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT)) {
             report.directories_scheduled_for_reboot++;
             report.reboot_required = true;
-            Logger::debug(L"Directory scheduled for reboot removal: " + dir.path);
         } else {
             report.failed_paths.push_back(dir.path);
-            Logger::error(L"Failed to remove directory: " + dir.path + L" (error " +
-                         std::to_wstring(err != 0 ? err : GetLastError()) + L")");
         }
     }
 

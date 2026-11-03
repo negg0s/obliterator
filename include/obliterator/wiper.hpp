@@ -41,9 +41,12 @@ struct PhysicalWipeReport {
 class FileWiper {
 public:
     static Result<void> wipe_physical_tree(const std::wstring& target_root,
-                                           PhysicalWipeReport& report);
+                                           PhysicalWipeReport& report,
+                                           bool compute_sizes = true,
+                                           size_t thread_count = 0);
     static Result<void> wipe_directory_tree(const std::wstring& target_root,
-                                            WipeReport& report);
+                                            WipeReport& report,
+                                            bool compute_sizes = true);
 
     static Result<void> delete_file_lazy(const std::wstring& path, WipeReport& report);
     static Result<void> delete_directory_lazy(const std::wstring& path, WipeReport& report);
