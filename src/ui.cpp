@@ -2,6 +2,7 @@
 #include "obliterator/handles.hpp"
 #include "obliterator/registry_cleaner.hpp"
 #include "obliterator/target.hpp"
+#include "obliterator/uwp.hpp"
 #include "obliterator/wiper.hpp"
 
 #include <conio.h>
@@ -173,6 +174,20 @@ std::vector<InstalledAppInfo> UserInterface::enumerate_installed_apps() {
                 });
             }
         }
+    }
+
+    const auto uwp_apps = UwpManager::enumerate_packages();
+    for (const auto& uwp : uwp_apps) {
+        apps.push_back({
+            L"[UWP] " + uwp.display_name,
+            uwp.install_location,
+            uwp.install_date,
+            uwp.size_bytes,
+            uwp.install_location,
+            true,
+            uwp.full_name,
+            uwp.family_name
+        });
     }
 
     std::sort(apps.begin(), apps.end(), [](const InstalledAppInfo& a, const InstalledAppInfo& b) {

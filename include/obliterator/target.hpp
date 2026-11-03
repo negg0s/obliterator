@@ -20,6 +20,11 @@ struct Target {
     std::wstring publisher;
     std::wstring root_path;
     std::vector<TargetRegistryEntry> registry_entries;
+    bool is_uwp{false};
+    std::wstring uwp_package_full_name;
+    std::wstring uwp_package_family_name;
+    std::wstring uninstall_string;
+    std::wstring quiet_uninstall_string;
 };
 
 class TargetResolver {

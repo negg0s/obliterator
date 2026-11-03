@@ -2,6 +2,7 @@
 #include "obliterator/log.hpp"
 #include "obliterator/path.hpp"
 #include "obliterator/safety.hpp"
+#include "obliterator/uwp.hpp"
 
 #include <algorithm>
 #include <cwctype>
@@ -272,10 +273,14 @@ Result<Target> TargetResolver::resolve(const std::wstring& input) {
             UniqueHKey hKey;
             if (RegOpenKeyExW(reg_entry.root_key, reg_entry.subkey_path.c_str(), 0,
                               KEY_READ | reg_entry.sam_view, hKey.put()) == ERROR_SUCCESS) {
-                const std::wstring pub = query_registry_string(hKey.get(), L"Publisher");
-                if (!pub.empty()) {
-                    target.publisher = pub;
-                    break;
+                if (target.publisher.empty()) {
+                    target.publisher = query_registry_string(hKey.get(), L"Publisher");
+                }
+                if (target.uninstall_string.empty()) {
+                    target.uninstall_string = query_registry_string(hKey.get(), L"UninstallString");
+                }
+                if (target.quiet_uninstall_string.empty()) {
+                    target.quiet_uninstall_string = query_registry_string(hKey.get(), L"QuietUninstallString");
                 }
             }
         }
@@ -287,6 +292,8 @@ Result<Target> TargetResolver::resolve(const std::wstring& input) {
         std::wstring display_name;
         std::wstring publisher;
         std::wstring root_path;
+        std::wstring uninstall_string;
+        std::wstring quiet_uninstall_string;
         TargetRegistryEntry entry;
     };
 
@@ -329,6 +336,7 @@ Result<Target> TargetResolver::resolve(const std::wstring& input) {
             const std::wstring install_loc = query_registry_string(subkey.get(), L"InstallLocation");
             const std::wstring display_icon = query_registry_string(subkey.get(), L"DisplayIcon");
             const std::wstring uninstall_str = query_registry_string(subkey.get(), L"UninstallString");
+            const std::wstring quiet_uninst = query_registry_string(subkey.get(), L"QuietUninstallString");
             const std::wstring publisher = query_registry_string(subkey.get(), L"Publisher");
 
             const std::wstring deduced =
@@ -357,6 +365,8 @@ Result<Target> TargetResolver::resolve(const std::wstring& input) {
                     display_name,
                     publisher,
                     deduced,
+                    uninstall_str,
+                    quiet_uninst,
                     {scope.root, std::wstring(kUninstallPath) + L"\\" + subkey_name, scope.sam, display_name}
                 });
             }
@@ -364,7 +374,28 @@ Result<Target> TargetResolver::resolve(const std::wstring& input) {
     }
 
     if (candidates.empty()) {
-        Logger::error(L"No installed software or directory matches: " + input);
+        std::wstring clean_input = input;
+        if (clean_input.starts_with(L"[UWP] ")) {
+            clean_input.erase(0, 6);
+        }
+        const std::wstring lower_clean = to_lower_string(clean_input);
+
+        for (const auto& uwp : UwpManager::enumerate_packages()) {
+            if (to_lower_string(uwp.display_name).find(lower_clean) != std::wstring::npos ||
+                to_lower_string(uwp.name).find(lower_clean) != std::wstring::npos ||
+                to_lower_string(uwp.full_name).find(lower_clean) != std::wstring::npos) {
+                Target target;
+                target.name = uwp.display_name;
+                target.publisher = uwp.publisher;
+                target.root_path = uwp.install_location;
+                target.is_uwp = true;
+                target.uwp_package_full_name = uwp.full_name;
+                target.uwp_package_family_name = uwp.family_name;
+                return target;
+            }
+        }
+
+        Logger::error(L"No installed software, UWP package or directory matches: " + input);
         return Win32Error::from_code(ERROR_NOT_FOUND);
     }
 
@@ -380,6 +411,8 @@ Result<Target> TargetResolver::resolve(const std::wstring& input) {
     target.name = candidates[0].display_name;
     target.publisher = candidates[0].publisher;
     target.root_path = candidates[0].root_path;
+    target.uninstall_string = candidates[0].uninstall_string;
+    target.quiet_uninstall_string = candidates[0].quiet_uninstall_string;
     target.registry_entries.push_back(candidates[0].entry);
 
     // Find any additional registry entries associated with this same root directory

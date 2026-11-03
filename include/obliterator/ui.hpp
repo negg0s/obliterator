@@ -23,6 +23,9 @@ struct InstalledAppInfo {
     std::wstring install_date;
     uint64_t size_bytes{0};
     std::wstring root_path;
+    bool is_uwp{false};
+    std::wstring uwp_package_full_name;
+    std::wstring uwp_package_family_name;
 };
 
 class UserInterface {
