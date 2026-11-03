@@ -1,16 +1,21 @@
 #include "obliterator/confidence_config.hpp"
 #include "obliterator/confidence_engine.hpp"
-#include "obliterator/profile.hpp"
+#include "obliterator/defuse.hpp"
 #include "obliterator/error.hpp"
 #include "obliterator/handles.hpp"
 #include "obliterator/leftovers.hpp"
 #include "obliterator/path.hpp"
+#include "obliterator/pending_rename.hpp"
 #include "obliterator/plan.hpp"
+#include "obliterator/portable.hpp"
 #include "obliterator/privileges.hpp"
 #include "obliterator/process.hpp"
+#include "obliterator/profile.hpp"
 #include "obliterator/registry_cleaner.hpp"
 #include "obliterator/report.hpp"
 #include "obliterator/result.hpp"
+#include "obliterator/resume.hpp"
+#include "obliterator/safe_mode.hpp"
 #include "obliterator/safety.hpp"
 #include "obliterator/service.hpp"
 #include "obliterator/target.hpp"
@@ -18,7 +23,6 @@
 #include "obliterator/uninstaller.hpp"
 #include "obliterator/unlocker.hpp"
 #include "obliterator/uwp.hpp"
-#include "obliterator/portable.hpp"
 #include "obliterator/wiper.hpp"
 
 #include <crtdbg.h>
@@ -1206,6 +1210,173 @@ static void test_profile_hive_loading_and_sharing_violation() {
     fs::remove_all(sandbox);
 }
 
+static void test_pending_rename_multi_sz() {
+    check(PendingRenameManager::to_nt_path(L"C:\\app\\test.dll") == L"\\??\\C:\\app\\test.dll", "to_nt_path win32");
+    check(PendingRenameManager::to_nt_path(L"\\\\?\\C:\\app\\test.dll") == L"\\??\\C:\\app\\test.dll", "to_nt_path extended");
+    check(PendingRenameManager::to_nt_path(L"\\\\server\\share\\f.dll") == L"\\??\\UNC\\server\\share\\f.dll", "to_nt_path unc");
+
+    std::vector<PendingRenameEntry> entries = {
+        {L"\\??\\C:\\old.dll", L"\\??\\C:\\new.dll"},
+        {L"\\??\\C:\\del.dll", L""}
+    };
+    const auto serialized = PendingRenameManager::serialize_multi_sz(entries);
+    check(!serialized.empty(), "serialized multi_sz not empty");
+    check(serialized.back() == L'\0', "serialized ends with null");
+
+    const auto parsed = PendingRenameManager::parse_multi_sz(serialized.data(), serialized.size());
+    check(parsed.size() == 2, "parsed 2 entries");
+    check(parsed[0].source_nt_path == L"\\??\\C:\\old.dll", "entry 0 src");
+    check(parsed[0].destination_nt_path == L"\\??\\C:\\new.dll", "entry 0 dst");
+    check(parsed[1].source_nt_path == L"\\??\\C:\\del.dll", "entry 1 src");
+    check(parsed[1].destination_nt_path.empty(), "entry 1 dst empty (deletion)");
+}
+
+static void test_resume_state_serialization() {
+    ResumeState state;
+    state.target_name = L"TestApp";
+    state.target_root = L"C:\\Program Files\\TestApp";
+    state.aggressive = true;
+    state.created_at = L"Tue Nov 03 21:00:00 2026";
+    state.pending_files = {L"C:\\Program Files\\TestApp\\locked.dll", L"C:\\Program Files\\TestApp\\driver.sys"};
+    state.pending_directories = {L"C:\\Program Files\\TestApp"};
+    state.pending_services = {L"TestAppSvc"};
+    state.pending_drivers = {L"TestAppDrv"};
+
+    check(ResumeManager::save_resume_state(state), "save resume state");
+    check(ResumeManager::has_resume_state(), "has resume state true");
+
+    ResumeState loaded;
+    check(ResumeManager::load_resume_state(loaded), "load resume state");
+    check(loaded.target_name == L"TestApp", "loaded target name");
+    check(loaded.target_root == L"C:\\Program Files\\TestApp", "loaded target root");
+    check(loaded.aggressive, "loaded aggressive");
+    check(loaded.pending_files.size() == 2, "loaded 2 pending files");
+    check(loaded.pending_directories.size() == 1, "loaded 1 pending dir");
+    check(loaded.pending_services.size() == 1, "loaded 1 pending service");
+    check(loaded.pending_drivers.size() == 1, "loaded 1 pending driver");
+
+    ResumeManager::cleanup_resume_state();
+    check(!ResumeManager::has_resume_state(), "resume state cleaned up");
+}
+
+static void test_service_failure_actions_defuse() {
+    UniqueScHandle scm(OpenSCManagerW(nullptr, nullptr, SC_MANAGER_ALL_ACCESS));
+    if (!scm) {
+        std::wcout << L"  [SKIP] Service failure actions test requires SCM access\n";
+        return;
+    }
+
+    const std::wstring test_svc_name = L"ObliteratorTestFailureSvc";
+
+    UniqueScHandle existing(OpenServiceW(scm.get(), test_svc_name.c_str(), DELETE));
+    if (existing) {
+        DeleteService(existing.get());
+    }
+
+    wchar_t sys_dir[MAX_PATH]{};
+    GetSystemDirectoryW(sys_dir, MAX_PATH);
+    const std::wstring dummy_bin = std::wstring(sys_dir) + L"\\svchost.exe";
+
+    UniqueScHandle svc(CreateServiceW(
+        scm.get(),
+        test_svc_name.c_str(),
+        L"Obliterator Failure Test Service",
+        SERVICE_ALL_ACCESS,
+        SERVICE_WIN32_OWN_PROCESS,
+        SERVICE_DEMAND_START,
+        SERVICE_ERROR_NORMAL,
+        dummy_bin.c_str(),
+        nullptr, nullptr, nullptr, nullptr, nullptr
+    ));
+
+    if (!svc) {
+        std::wcout << L"  [SKIP] Could not create test service (requires elevation)\n";
+        return;
+    }
+
+    SC_ACTION actions[2] = {
+        {SC_ACTION_RESTART, 5000},
+        {SC_ACTION_RESTART, 10000}
+    };
+    SERVICE_FAILURE_ACTIONSW sfa{};
+    sfa.dwResetPeriod = 60;
+    sfa.cActions = 2;
+    sfa.lpsaActions = actions;
+    check(ChangeServiceConfig2W(svc.get(), SERVICE_CONFIG_FAILURE_ACTIONS, &sfa) != 0, "set failure actions");
+
+    check(RecoveryDefuser::defuse_service(scm.get(), test_svc_name), "defuse service");
+
+    DWORD needed = 0;
+    QueryServiceConfig2W(svc.get(), SERVICE_CONFIG_FAILURE_ACTIONS, nullptr, 0, &needed);
+    check(needed > 0, "query failure actions needed bytes");
+    std::vector<BYTE> buf(needed);
+    check(QueryServiceConfig2W(svc.get(), SERVICE_CONFIG_FAILURE_ACTIONS, buf.data(), needed, &needed) != 0, "query failure actions");
+    auto* queried_sfa = reinterpret_cast<LPSERVICE_FAILURE_ACTIONSW>(buf.data());
+    check(queried_sfa->cActions == 0, "failure actions count is 0 after defusing");
+
+    QueryServiceConfigW(svc.get(), nullptr, 0, &needed);
+    std::vector<BYTE> cfg_buf(needed);
+    check(QueryServiceConfigW(svc.get(), reinterpret_cast<LPQUERY_SERVICE_CONFIGW>(cfg_buf.data()), needed, &needed) != 0, "query service config");
+    auto* cfg = reinterpret_cast<LPQUERY_SERVICE_CONFIGW>(cfg_buf.data());
+    check(cfg->dwStartType == SERVICE_DISABLED, "service start type is disabled after defusing");
+
+    DeleteService(svc.get());
+}
+
+static void test_mutual_watchdog_freeze_and_termination() {
+    namespace fs = std::filesystem;
+    const fs::path test_dir = L"D:\\Projects\\obliterator\\build\\test_watchdogs";
+    fs::create_directories(test_dir);
+
+    wchar_t self_path[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, self_path, MAX_PATH);
+    fs::path test_dir_exe = fs::path(self_path).parent_path() / L"test_blocker.exe";
+    if (!fs::exists(test_dir_exe)) {
+        std::wcout << L"  [SKIP] test_blocker.exe not found for mutual watchdog test\n";
+        return;
+    }
+
+    fs::path w1 = test_dir / L"watchdog1.exe";
+    fs::path w2 = test_dir / L"watchdog2.exe";
+    fs::copy_file(test_dir_exe, w1, fs::copy_options::overwrite_existing);
+    fs::copy_file(test_dir_exe, w2, fs::copy_options::overwrite_existing);
+
+    STARTUPINFOW si1{};
+    si1.cb = sizeof(si1);
+    PROCESS_INFORMATION pi1{};
+    std::wstring cmd1 = L"\"" + w1.wstring() + L"\"";
+    check(CreateProcessW(nullptr, cmd1.data(), nullptr, nullptr, FALSE, 0, nullptr,
+                         test_dir.wstring().c_str(), &si1, &pi1) != 0, "spawn watchdog1");
+
+    STARTUPINFOW si2{};
+    si2.cb = sizeof(si2);
+    PROCESS_INFORMATION pi2{};
+    std::wstring cmd2 = L"\"" + w2.wstring() + L"\" --mutual-watchdog " + std::to_wstring(pi1.dwProcessId);
+    check(CreateProcessW(nullptr, cmd2.data(), nullptr, nullptr, FALSE, 0, nullptr,
+                         test_dir.wstring().c_str(), &si2, &pi2) != 0, "spawn watchdog2");
+
+    CloseHandle(pi1.hThread);
+    CloseHandle(pi2.hThread);
+
+    Sleep(200);
+
+    const auto procs_found = ProcessManager::find_target_processes(test_dir.wstring());
+    check(procs_found.size() >= 2, "found both watchdogs");
+
+    const auto report = ProcessManager::terminate_target_processes(test_dir.wstring(), 5);
+    check(report.killed >= 2, "both watchdogs killed");
+
+    Sleep(300);
+    const auto procs_after = ProcessManager::find_target_processes(test_dir.wstring());
+    check(procs_after.empty(), "no watchdogs respawned after freezing and termination");
+
+    CloseHandle(pi1.hProcess);
+    CloseHandle(pi2.hProcess);
+
+    PhysicalWipeReport wipe_rep;
+    FileWiper::wipe_physical_tree(test_dir.wstring(), wipe_rep);
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -1269,6 +1440,14 @@ int main() {
     test_confidence_engine_scenarios();
     std::wcout << L"[RUN] test_profile_hive_loading_and_sharing_violation\n" << std::flush;
     test_profile_hive_loading_and_sharing_violation();
+    std::wcout << L"[RUN] test_pending_rename_multi_sz\n" << std::flush;
+    test_pending_rename_multi_sz();
+    std::wcout << L"[RUN] test_resume_state_serialization\n" << std::flush;
+    test_resume_state_serialization();
+    std::wcout << L"[RUN] test_service_failure_actions_defuse\n" << std::flush;
+    test_service_failure_actions_defuse();
+    std::wcout << L"[RUN] test_mutual_watchdog_freeze_and_termination\n" << std::flush;
+    test_mutual_watchdog_freeze_and_termination();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;

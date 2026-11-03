@@ -12,6 +12,35 @@ int wmain(int argc, wchar_t* argv[]) {
     wchar_t own_path[MAX_PATH]{};
     GetModuleFileNameW(nullptr, own_path, MAX_PATH);
 
+    // Mutual watchdog mode
+    if (argc >= 3 && std::wstring_view(argv[1]) == L"--mutual-watchdog") {
+        DWORD peer_pid = static_cast<DWORD>(std::stoul(argv[2]));
+        HANDLE hPeer = OpenProcess(SYNCHRONIZE, FALSE, peer_pid);
+
+        while (true) {
+            Sleep(25);
+            if (hPeer != nullptr) {
+                DWORD wait_res = WaitForSingleObject(hPeer, 0);
+                if (wait_res == WAIT_OBJECT_0) {
+                    CloseHandle(hPeer);
+                    hPeer = nullptr;
+
+                    STARTUPINFOW si{};
+                    si.cb = sizeof(si);
+                    PROCESS_INFORMATION pi{};
+                    std::wstring cmd = L"\"" + std::wstring(own_path) + L"\" --mutual-watchdog " +
+                                       std::to_wstring(GetCurrentProcessId());
+                    if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, 0,
+                                       nullptr, nullptr, &si, &pi)) {
+                        CloseHandle(pi.hProcess);
+                        CloseHandle(pi.hThread);
+                    }
+                }
+            }
+        }
+        return 0;
+    }
+
     // Watchdog child mode
     if (argc >= 3 && std::wstring_view(argv[1]) == L"--child") {
         DWORD parent_pid = static_cast<DWORD>(std::stoul(argv[2]));
