@@ -1,6 +1,18 @@
-# Package Publishing Guide
+# Package Publishing & Repository Metadata
 
-This guide describes how to publish Obliterator packages to Windows Package Manager (WinGet) and Scoop.
+## 0. GitHub Repository Metadata
+
+### Repository Description (About Field)
+Fast, native C++20 uninstaller and remnant cleaner for Windows. Disarms auto-healing services, frees locked file handles, wipes multi-profile registry keys, and removes directory trees using POSIX unlink semantics in milliseconds.
+
+*(Length: 236 characters, limit: 350 characters)*
+
+### Topics (Repository Tags)
+```
+windows, uninstaller, cli, tui, cpp, cplusplus20, win32, system-tool, clean, performance
+```
+
+---
 
 ## 1. Windows Package Manager (WinGet)
 
