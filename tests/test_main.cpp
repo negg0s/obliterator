@@ -5,10 +5,12 @@
 #include "obliterator/privileges.hpp"
 #include "obliterator/process.hpp"
 #include "obliterator/registry_cleaner.hpp"
+#include "obliterator/report.hpp"
 #include "obliterator/result.hpp"
 #include "obliterator/safety.hpp"
 #include "obliterator/service.hpp"
 #include "obliterator/target.hpp"
+#include "obliterator/ui.hpp"
 #include "obliterator/unlocker.hpp"
 #include "obliterator/wiper.hpp"
 
@@ -17,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <winioctl.h>
 
 using namespace obliterator;
@@ -419,6 +422,54 @@ static void test_registry_cleaner_autorun() {
     check(st == ERROR_SUCCESS, "cleaned up fake autorun value");
 }
 
+static void test_context_menu_installation() {
+    auto install_res = UserInterface::install_context_menu();
+    check(install_res.has_value(), "install_context_menu succeeds");
+
+    UniqueHKey key;
+    LSTATUS st = RegOpenKeyExW(HKEY_CURRENT_USER,
+                               L"Software\\Classes\\Directory\\shell\\Obliterator",
+                               0, KEY_READ, key.put());
+    check(st == ERROR_SUCCESS, "context menu key exists in HKCU");
+
+    auto uninstall_res = UserInterface::uninstall_context_menu();
+    check(uninstall_res.has_value(), "uninstall_context_menu succeeds");
+
+    key.reset();
+    st = RegOpenKeyExW(HKEY_CURRENT_USER,
+                       L"Software\\Classes\\Directory\\shell\\Obliterator",
+                       0, KEY_READ, key.put());
+    check(st != ERROR_SUCCESS, "context menu key removed from HKCU");
+}
+
+static void test_installed_apps_enumeration() {
+    const auto apps = UserInterface::enumerate_installed_apps();
+    // apps should be a valid list (might be non-empty on real system)
+    for (size_t i = 1; i < apps.size(); ++i) {
+        check(apps[i - 1].size_bytes >= apps[i].size_bytes, "apps sorted by size descending");
+    }
+}
+
+static void test_final_report_json() {
+    FinalReport rep;
+    rep.target_name = L"TestApp";
+    rep.target_root = L"D:\\Apps\\TestApp";
+    rep.success = true;
+    rep.exit_code = ExitCode::Success;
+    rep.files_deleted = 42;
+    rep.bytes_freed = 1048576;
+
+    std::wstringstream ss;
+    auto* old_buf = std::wcout.rdbuf(ss.rdbuf());
+    rep.print_json();
+    std::wcout.rdbuf(old_buf);
+
+    const std::wstring json_str = ss.str();
+    check(json_str.find(L"\"TestApp\"") != std::wstring::npos, "json contains target name");
+    check(json_str.find(L"\"files_deleted\": 42") != std::wstring::npos, "json contains files_deleted");
+    check(json_str.find(L"\"exit_code\": 0") != std::wstring::npos, "json contains exit_code");
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -438,6 +489,9 @@ int main() {
     test_plan_structure();
     test_registry_backup();
     test_registry_cleaner_autorun();
+    test_context_menu_installation();
+    test_installed_apps_enumeration();
+    test_final_report_json();
 
     std::cout << "All tests passed successfully.\n";
     return 0;

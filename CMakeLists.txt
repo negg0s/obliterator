@@ -18,9 +18,11 @@ add_library(obliterator_core STATIC
     include/obliterator/result.hpp
     include/obliterator/registry_cleaner.hpp
     include/obliterator/leftovers.hpp
+    include/obliterator/report.hpp
     include/obliterator/safety.hpp
     include/obliterator/service.hpp
     include/obliterator/target.hpp
+    include/obliterator/ui.hpp
     include/obliterator/unlocker.hpp
     include/obliterator/wiper.hpp
     src/error.cpp
@@ -30,9 +32,11 @@ add_library(obliterator_core STATIC
     src/privileges.cpp
     src/process.cpp
     src/registry_cleaner.cpp
+    src/report.cpp
     src/safety.cpp
     src/service.cpp
     src/target.cpp
+    src/ui.cpp
     src/unlocker.cpp
     src/wiper.cpp
 )

@@ -16,6 +16,9 @@ public:
     static void set_verbose(bool enabled) noexcept;
     static bool is_verbose() noexcept;
 
+    static void set_json_mode(bool enabled) noexcept;
+    static bool is_json_mode() noexcept;
+
     static void log(LogLevel level, std::string_view message);
     static void log(LogLevel level, std::wstring_view message);
 

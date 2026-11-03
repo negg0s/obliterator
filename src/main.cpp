@@ -5,8 +5,11 @@
 #include "obliterator/privileges.hpp"
 #include "obliterator/process.hpp"
 #include "obliterator/registry_cleaner.hpp"
+#include "obliterator/report.hpp"
+#include "obliterator/safety.hpp"
 #include "obliterator/service.hpp"
 #include "obliterator/target.hpp"
+#include "obliterator/ui.hpp"
 #include "obliterator/unlocker.hpp"
 #include "obliterator/wiper.hpp"
 
@@ -24,21 +27,28 @@ struct CommandLineOptions {
     bool no_handle_kill{false};
     bool no_backup{false};
     bool aggressive{false};
+    bool json{false};
+    bool install_menu{false};
+    bool uninstall_menu{false};
     uint32_t timeout_seconds{5};
 };
 
 static void print_usage() {
-    std::wcout << L"Usage: obliterator <target-name-or-path> [options]\n\n"
+    std::wcout << L"Usage: obliterator [target-name-or-path] [options]\n\n"
                << L"Arguments:\n"
-               << L"  <target-name-or-path>  Target directory or application name to wipe\n\n"
+               << L"  [target-name-or-path]  Target directory or application name to wipe.\n"
+               << L"                         If omitted, launches interactive program selector.\n\n"
                << L"Options:\n"
                << L"  --dry-run              Inspect and plan without modifying the system\n"
                << L"  --yes, -y              Skip confirmation prompt\n"
-               << L"  --verbose, -v          Enable debug output\n"
-               << L"  --timeout <sec>        Process kill wait timeout in seconds (default: 5)\n"
-               << L"  --no-handle-kill       Disable remote file handle duplication and closure\n"
-               << L"  --no-backup            Disable registry export to .reg before deletion\n"
                << L"  --aggressive           Delete possible leftovers matching heuristic\n"
+               << L"  --no-backup            Disable registry export to .reg before deletion\n"
+               << L"  --no-handle-kill       Disable remote file handle duplication and closure\n"
+               << L"  --timeout <sec>        Process kill wait timeout in seconds (default: 5)\n"
+               << L"  --verbose, -v          Enable debug output\n"
+               << L"  --json                 Output final report in JSON format\n"
+               << L"  --install-menu         Add 'Force Obliterate' to folder context menu in HKCU\n"
+               << L"  --uninstall-menu       Remove 'Force Obliterate' from folder context menu\n"
                << L"  --help, -h             Display this help message\n";
 }
 
@@ -60,6 +70,12 @@ static Result<CommandLineOptions> parse_arguments(int argc, wchar_t* argv[]) {
             options.no_backup = true;
         } else if (arg == L"--aggressive") {
             options.aggressive = true;
+        } else if (arg == L"--json") {
+            options.json = true;
+        } else if (arg == L"--install-menu") {
+            options.install_menu = true;
+        } else if (arg == L"--uninstall-menu") {
+            options.uninstall_menu = true;
         } else if (arg == L"--timeout") {
             if (i + 1 < argc) {
                 try {
@@ -74,7 +90,7 @@ static Result<CommandLineOptions> parse_arguments(int argc, wchar_t* argv[]) {
             }
         } else if (arg == L"--help" || arg == L"-h") {
             print_usage();
-            ExitProcess(0);
+            ExitProcess(ExitCode::Success);
         } else if (arg.starts_with(L"-")) {
             Logger::error(std::wstring(L"Unknown option: ") + std::wstring(arg));
             return Win32Error::from_code(ERROR_INVALID_PARAMETER);
@@ -82,15 +98,10 @@ static Result<CommandLineOptions> parse_arguments(int argc, wchar_t* argv[]) {
             if (options.target.empty()) {
                 options.target = arg;
             } else {
-                Logger::error(L"Multiple targets specified; provide exactly one target.");
+                Logger::error(L"Multiple targets specified; provide at most one target.");
                 return Win32Error::from_code(ERROR_INVALID_PARAMETER);
             }
         }
-    }
-
-    if (options.target.empty()) {
-        print_usage();
-        return Win32Error::from_code(ERROR_BAD_ARGUMENTS);
     }
 
     return options;
@@ -103,11 +114,51 @@ int wmain(int argc, wchar_t* argv[]) {
 
     auto parse_res = parse_arguments(argc, argv);
     if (!parse_res) {
-        return 1;
+        return ExitCode::Error;
     }
 
-    const auto& options = parse_res.value();
+    auto options = parse_res.value();
     Logger::set_verbose(options.verbose);
+    if (options.json) {
+        Logger::set_json_mode(true);
+    }
+
+    if (options.install_menu) {
+        auto res = UserInterface::install_context_menu();
+        if (res) {
+            std::wcout << L"Context menu item 'Force Obliterate' added successfully to HKCU.\n";
+            return ExitCode::Success;
+        }
+        Logger::error(L"Failed to install context menu: " + res.error().message());
+        return ExitCode::Error;
+    }
+
+    if (options.uninstall_menu) {
+        auto res = UserInterface::uninstall_context_menu();
+        if (res) {
+            std::wcout << L"Context menu item 'Force Obliterate' removed successfully from HKCU.\n";
+            return ExitCode::Success;
+        }
+        Logger::error(L"Failed to uninstall context menu: " + res.error().message());
+        return ExitCode::Error;
+    }
+
+    // Interactive mode if no target is provided
+    if (options.target.empty()) {
+        if (options.json) {
+            Logger::error(L"No target specified for JSON mode. Provide a target name or path.");
+            return ExitCode::Error;
+        }
+
+        const auto apps = UserInterface::enumerate_installed_apps();
+        auto chosen = UserInterface::select_app_interactive(apps);
+        if (!chosen.has_value()) {
+            return ExitCode::Success;
+        }
+
+        options.target = chosen->name;
+        options.yes = true;
+    }
 
     Logger::debug(L"Verbosity enabled");
     Logger::debug(std::wstring(L"Input target: ") + options.target);
@@ -122,14 +173,24 @@ int wmain(int argc, wchar_t* argv[]) {
 
     auto target_res = TargetResolver::resolve(options.target);
     if (!target_res) {
+        const DWORD err_code = target_res.error().code();
         Logger::error(L"Failed to resolve target: " + target_res.error().message());
-        return 1;
+
+        if (err_code == ERROR_ACCESS_DENIED) {
+            return ExitCode::SafetyViolation;
+        }
+        return ExitCode::Error;
     }
 
     const auto& target = target_res.value();
+    if (!SafetyValidator::validate_path(target.root_path)) {
+        Logger::error(L"Target path rejected by safety checks: " + target.root_path);
+        return ExitCode::SafetyViolation;
+    }
+
     Plan plan(target);
 
-    // Discover processes associated with the target directory
+    // 1. Discover processes associated with the target directory
     const auto target_procs = ProcessManager::find_target_processes(target.root_path);
     for (const auto& proc : target_procs) {
         std::wstring reason = L"image path";
@@ -141,25 +202,25 @@ int wmain(int argc, wchar_t* argv[]) {
         plan.processes_to_terminate.push_back({proc.pid, proc.name, proc.image_path, reason});
     }
 
-    // Level 1 lock inspection via Restart Manager
+    // 2. Discover file locks
     const auto locked_files = FileUnlocker::inspect_locks(target.root_path);
     for (const auto& lock : locked_files) {
         plan.locked_files_to_release.push_back({lock.path, lock.pid, lock.process_name});
     }
 
-    // Inspect services and drivers
+    // 3. Discover services and drivers
     const auto target_services = ServiceManager::find_target_services(target.root_path);
     for (const auto& svc : target_services) {
         plan.services_to_remove.push_back({svc.name, svc.display_name, svc.binary_path, svc.is_driver});
     }
 
-    // Inspect scheduled tasks
+    // 4. Discover scheduled tasks
     const auto target_tasks = ServiceManager::find_target_tasks(target.root_path);
     for (const auto& task : target_tasks) {
         plan.tasks_to_remove.push_back({task.name, task.folder_path, task.action_path});
     }
 
-    // Inspect registry autorun entries
+    // 5. Discover autorun entries
     const auto target_autoruns = RegistryCleaner::find_autorun_entries(target.root_path);
     for (const auto& ar : target_autoruns) {
         plan.registry_keys_to_remove.push_back({
@@ -170,7 +231,7 @@ int wmain(int argc, wchar_t* argv[]) {
         });
     }
 
-    // Inspect shell verbs and context menu extensions
+    // 6. Discover shell verbs and context menu extensions
     const auto target_shells = RegistryCleaner::find_shell_entries(target.root_path);
     for (const auto& sh : target_shells) {
         plan.registry_keys_to_remove.push_back({
@@ -181,7 +242,7 @@ int wmain(int argc, wchar_t* argv[]) {
         });
     }
 
-    // Inspect product and vendor keys
+    // 7. Discover product and vendor keys
     const auto target_prod_keys = RegistryCleaner::find_product_keys(target);
     for (const auto& pk : target_prod_keys) {
         plan.registry_keys_to_remove.push_back({
@@ -192,7 +253,7 @@ int wmain(int argc, wchar_t* argv[]) {
         });
     }
 
-    // Inspect leftovers
+    // 8. Discover leftovers
     const auto target_leftovers = LeftoversCleaner::find_leftovers(target);
     for (const auto& left : target_leftovers) {
         std::wstring type_str = (left.kind == LeftoverKind::Folder) ? L"FOLDER" :
@@ -204,112 +265,112 @@ int wmain(int argc, wchar_t* argv[]) {
     if (options.dry_run) {
         Logger::info(L"Dry-run mode active; displaying plan without making modifications");
         plan.print();
-        return 0;
+        return ExitCode::Success;
     }
 
-    plan.print();
+    if (!options.yes) {
+        plan.print();
+        if (!UserInterface::prompt_confirmation(target.name)) {
+            std::wcout << L"Operation cancelled by user.\n";
+            return ExitCode::Success;
+        }
+    }
 
+    FinalReport final_report;
+    final_report.target_name = target.name;
+    final_report.target_root = target.root_path;
+
+    // Phase 1: Terminate target processes
     if (!plan.processes_to_terminate.empty()) {
         Logger::info(L"Terminating target processes...");
         const auto report = ProcessManager::terminate_target_processes(
             target.root_path, options.timeout_seconds);
 
-        std::wcout << L"Process summary: found " << report.found
-                   << L", killed " << report.killed
-                   << L", failed " << report.failed << L"\n";
-
-        if (!report.failures.empty()) {
-            std::wcout << L"Failed process terminations:\n";
-            for (const auto& f : report.failures) {
-                std::wcout << L"  [PID " << f.pid << L"] " << f.name
-                           << L" - " << f.reason << L"\n";
-            }
-        }
+        final_report.processes_found = report.found;
+        final_report.processes_killed = report.killed;
+        final_report.processes_failed = report.failed;
     }
 
+    // Phase 2: Release file locks
     Logger::info(L"Releasing file locks...");
     const auto unlock_report = FileUnlocker::release_locks(
         target.root_path, !options.no_handle_kill);
+    final_report.handles_closed = unlock_report.handles_closed;
 
-    std::wcout << L"Lock release summary: "
-               << unlock_report.handles_closed << L" handles closed\n";
-
+    // Phase 3: Remove services, drivers, and scheduled tasks
     if (!plan.services_to_remove.empty() || !plan.tasks_to_remove.empty()) {
         Logger::info(L"Removing services, drivers, and scheduled tasks...");
         const auto svc_report = ServiceManager::remove_services_and_tasks(target.root_path);
 
-        std::wcout << L"Service summary: "
-                   << svc_report.services_stopped << L" services stopped, "
-                   << svc_report.services_deleted << L" services deleted, "
-                   << svc_report.drivers_stopped << L" drivers stopped, "
-                   << svc_report.drivers_deleted << L" drivers deleted, "
-                   << svc_report.tasks_deleted << L" tasks deleted\n";
+        final_report.services_stopped = svc_report.services_stopped;
+        final_report.services_deleted = svc_report.services_deleted;
+        final_report.drivers_stopped = svc_report.drivers_stopped;
+        final_report.drivers_deleted = svc_report.drivers_deleted;
+        final_report.tasks_deleted = svc_report.tasks_deleted;
 
         if (svc_report.reboot_required) {
-            Logger::warn(L"One or more drivers were marked for deletion; system reboot required");
-        }
-
-        for (const auto& w : svc_report.warnings) {
-            Logger::warn(w);
+            final_report.reboot_required = true;
+            final_report.pending_reboot_items.push_back(L"One or more drivers marked for deletion");
         }
     }
 
-    Logger::info(L"Deleting directory tree...");
+    // Phase 4: Wipe physical directory tree
+    Logger::info(L"Deleting physical directory tree...");
     PhysicalWipeReport wipe_report;
     auto wipe_res = FileWiper::wipe_physical_tree(target.root_path, wipe_report);
 
-    std::wcout << L"Filesystem summary: "
-               << wipe_report.files_deleted << L" files deleted, "
-               << wipe_report.directories_deleted << L" directories deleted, "
-               << wipe_report.junctions_deleted << L" junctions deleted, "
-               << wipe_report.acl_resets << L" ACL take-overs performed, "
-               << FileWiper::format_bytes(wipe_report.bytes_freed) << L" freed\n";
-
-    if (wipe_report.files_scheduled_for_reboot > 0 || wipe_report.directories_scheduled_for_reboot > 0) {
-        std::wcout << L"Reboot pending: "
-                   << wipe_report.files_scheduled_for_reboot << L" files and "
-                   << wipe_report.directories_scheduled_for_reboot
-                   << L" directories scheduled for removal upon reboot\n";
-    }
+    final_report.files_deleted = wipe_report.files_deleted;
+    final_report.directories_deleted = wipe_report.directories_deleted;
+    final_report.junctions_deleted = wipe_report.junctions_deleted;
+    final_report.acl_resets = wipe_report.acl_resets;
+    final_report.bytes_freed = wipe_report.bytes_freed;
+    final_report.files_scheduled_for_reboot = wipe_report.files_scheduled_for_reboot;
+    final_report.directories_scheduled_for_reboot = wipe_report.directories_scheduled_for_reboot;
 
     if (wipe_report.reboot_required) {
-        Logger::warn(L"One or more locked items require a system reboot to complete deletion");
+        final_report.reboot_required = true;
+        for (const auto& path : wipe_report.failed_paths) {
+            final_report.pending_reboot_items.push_back(path);
+        }
     }
 
-    if (!wipe_res) {
-        Logger::warn(L"Some filesystem items could not be deleted: " + wipe_res.error().message());
-    }
-
+    // Phase 5: Clean registry entries
     Logger::info(L"Cleaning registry entries...");
     RegistryCleanReport reg_report;
     auto reg_res = RegistryCleaner::clean(target, reg_report, options.no_backup);
 
-    std::wcout << L"Registry summary: "
-               << reg_report.total_keys_deleted << L" keys deleted, "
-               << reg_report.total_values_deleted << L" values deleted, "
-               << reg_report.items_backed_up << L" backed up to .reg\n";
+    final_report.uninstall_keys_deleted = reg_report.uninstall_keys_deleted;
+    final_report.autorun_values_deleted = reg_report.autorun_values_deleted;
+    final_report.shell_entries_deleted = reg_report.shell_entries_deleted;
+    final_report.product_keys_deleted = reg_report.product_keys_deleted;
+    final_report.total_reg_keys_deleted = reg_report.total_keys_deleted;
+    final_report.total_reg_values_deleted = reg_report.total_values_deleted;
+    final_report.items_backed_up = reg_report.items_backed_up;
+    final_report.backup_directory = reg_report.backup_directory;
 
-    if (reg_report.items_backed_up > 0 && !reg_report.backup_directory.empty()) {
-        std::wcout << L"Backup location: " << reg_report.backup_directory << L"\n";
-    }
-
-    if (!reg_res) {
-        Logger::warn(L"Some registry items could not be deleted: " + reg_res.error().message());
-    }
-
+    // Phase 6: Clean leftovers on disk and firewall rules
     Logger::info(L"Cleaning leftovers on disk and firewall rules...");
     const auto left_report = LeftoversCleaner::clean_leftovers(target, options.aggressive);
 
-    std::wcout << L"Leftovers summary: "
-               << left_report.folders_deleted << L" folders deleted, "
-               << left_report.shortcuts_deleted << L" shortcuts deleted, "
-               << left_report.firewall_rules_deleted << L" firewall rules deleted\n";
+    final_report.folders_deleted = left_report.folders_deleted;
+    final_report.shortcuts_deleted = left_report.shortcuts_deleted;
+    final_report.firewall_rules_deleted = left_report.firewall_rules_deleted;
+    final_report.possible_leftovers_skipped = left_report.possible_leftovers_skipped;
 
-    if (left_report.possible_leftovers_skipped > 0) {
-        std::wcout << L"Possible leftovers skipped: "
-                   << left_report.possible_leftovers_skipped
-                   << L" (re-run with --aggressive to remove)\n";
+    final_report.success = wipe_res.has_value() && reg_res.has_value();
+    if (!final_report.success) {
+        final_report.exit_code = ExitCode::Error;
+    } else if (final_report.reboot_required) {
+        final_report.exit_code = ExitCode::SuccessRebootRequired;
+    } else {
+        final_report.exit_code = ExitCode::Success;
     }
 
-    return 0;
+    if (options.json) {
+        final_report.print_json();
+    } else {
+        final_report.print_text();
+    }
+
+    return final_report.exit_code;
 }

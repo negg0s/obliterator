@@ -6,6 +6,7 @@
 namespace obliterator {
 
 static std::atomic<bool> g_verbose{false};
+static std::atomic<bool> g_json_mode{false};
 
 void Logger::set_verbose(bool enabled) noexcept {
     g_verbose.store(enabled, std::memory_order_relaxed);
@@ -15,12 +16,20 @@ bool Logger::is_verbose() noexcept {
     return g_verbose.load(std::memory_order_relaxed);
 }
 
+void Logger::set_json_mode(bool enabled) noexcept {
+    g_json_mode.store(enabled, std::memory_order_relaxed);
+}
+
+bool Logger::is_json_mode() noexcept {
+    return g_json_mode.load(std::memory_order_relaxed);
+}
+
 void Logger::log(LogLevel level, std::string_view message) {
     if (level == LogLevel::Debug && !is_verbose()) {
         return;
     }
 
-    std::ostream& stream = (level == LogLevel::Error) ? std::cerr : std::cout;
+    std::ostream& stream = (is_json_mode() || level == LogLevel::Error) ? std::cerr : std::cout;
 
     switch (level) {
     case LogLevel::Debug:
@@ -45,7 +54,7 @@ void Logger::log(LogLevel level, std::wstring_view message) {
         return;
     }
 
-    std::wostream& stream = (level == LogLevel::Error) ? std::wcerr : std::wcout;
+    std::wostream& stream = (is_json_mode() || level == LogLevel::Error) ? std::wcerr : std::wcout;
 
     switch (level) {
     case LogLevel::Debug:
