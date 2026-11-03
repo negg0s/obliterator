@@ -3,6 +3,7 @@
 #include "obliterator/plan.hpp"
 #include "obliterator/privileges.hpp"
 #include "obliterator/process.hpp"
+#include "obliterator/service.hpp"
 #include "obliterator/target.hpp"
 #include "obliterator/unlocker.hpp"
 
@@ -135,6 +136,18 @@ int wmain(int argc, wchar_t* argv[]) {
         plan.locked_files_to_release.push_back({lock.path, lock.pid, lock.process_name});
     }
 
+    // Inspect services and drivers
+    const auto target_services = ServiceManager::find_target_services(target.root_path);
+    for (const auto& svc : target_services) {
+        plan.services_to_remove.push_back({svc.name, svc.display_name, svc.binary_path, svc.is_driver});
+    }
+
+    // Inspect scheduled tasks
+    const auto target_tasks = ServiceManager::find_target_tasks(target.root_path);
+    for (const auto& task : target_tasks) {
+        plan.tasks_to_remove.push_back({task.name, task.folder_path, task.action_path});
+    }
+
     if (options.dry_run) {
         Logger::info(L"Dry-run mode active; displaying plan without making modifications");
         plan.print();
@@ -167,6 +180,26 @@ int wmain(int argc, wchar_t* argv[]) {
 
     std::wcout << L"Lock release summary: "
                << unlock_report.handles_closed << L" handles closed\n";
+
+    if (!plan.services_to_remove.empty() || !plan.tasks_to_remove.empty()) {
+        Logger::info(L"Removing services, drivers, and scheduled tasks...");
+        const auto svc_report = ServiceManager::remove_services_and_tasks(target.root_path);
+
+        std::wcout << L"Service summary: "
+                   << svc_report.services_stopped << L" services stopped, "
+                   << svc_report.services_deleted << L" services deleted, "
+                   << svc_report.drivers_stopped << L" drivers stopped, "
+                   << svc_report.drivers_deleted << L" drivers deleted, "
+                   << svc_report.tasks_deleted << L" tasks deleted\n";
+
+        if (svc_report.reboot_required) {
+            Logger::warn(L"One or more drivers were marked for deletion; system reboot required");
+        }
+
+        for (const auto& w : svc_report.warnings) {
+            Logger::warn(w);
+        }
+    }
 
     return 0;
 }

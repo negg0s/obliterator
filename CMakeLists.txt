@@ -17,6 +17,7 @@ add_library(obliterator_core STATIC
     include/obliterator/process.hpp
     include/obliterator/result.hpp
     include/obliterator/safety.hpp
+    include/obliterator/service.hpp
     include/obliterator/target.hpp
     include/obliterator/unlocker.hpp
     src/error.cpp
@@ -25,6 +26,7 @@ add_library(obliterator_core STATIC
     src/privileges.cpp
     src/process.cpp
     src/safety.cpp
+    src/service.cpp
     src/target.cpp
     src/unlocker.cpp
 )
@@ -37,6 +39,9 @@ target_link_libraries(obliterator_core PUBLIC
     advapi32
     ntdll
     rstrtmgr
+    taskschd
+    ole32
+    oleaut32
 )
 
 if(MSVC)

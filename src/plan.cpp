@@ -36,6 +36,8 @@ Plan::Plan(Target t) : target(std::move(t)) {
 bool Plan::is_empty() const noexcept {
     return processes_to_terminate.empty() &&
            locked_files_to_release.empty() &&
+           services_to_remove.empty() &&
+           tasks_to_remove.empty() &&
            directories_to_remove.empty() &&
            registry_keys_to_remove.empty();
 }
@@ -67,6 +69,25 @@ void Plan::print() const {
                 std::wcout << L" -> " << item.path;
             }
             std::wcout << L"\n";
+        }
+        std::wcout << L"\n";
+    }
+
+    if (!services_to_remove.empty()) {
+        std::wcout << L"Services and drivers to delete (" << services_to_remove.size() << L"):\n";
+        for (const auto& svc : services_to_remove) {
+            std::wcout << (svc.is_driver ? L"  [DRIVER]  " : L"  [SERVICE] ")
+                       << svc.name << L" (" << svc.display_name << L")\n"
+                       << L"            " << svc.binary_path << L"\n";
+        }
+        std::wcout << L"\n";
+    }
+
+    if (!tasks_to_remove.empty()) {
+        std::wcout << L"Scheduled tasks to delete (" << tasks_to_remove.size() << L"):\n";
+        for (const auto& task : tasks_to_remove) {
+            std::wcout << L"  [TASK] " << task.folder_path << L"\\" << task.name << L"\n"
+                       << L"         " << task.action_path << L"\n";
         }
         std::wcout << L"\n";
     }

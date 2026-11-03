@@ -5,6 +5,7 @@
 #include "obliterator/process.hpp"
 #include "obliterator/result.hpp"
 #include "obliterator/safety.hpp"
+#include "obliterator/service.hpp"
 #include "obliterator/target.hpp"
 #include "obliterator/unlocker.hpp"
 
@@ -188,6 +189,24 @@ static void test_unlocker() {
     check(report.handles_closed == 0, "handles closed on non-existent path is 0");
 }
 
+static void test_service_manager() {
+    const std::wstring driver_nt =
+        ServiceManager::normalize_service_image_path(L"\\??\\C:\\Program Files\\App\\driver.sys");
+    check(driver_nt == L"C:\\Program Files\\App\\driver.sys", "normalize driver NT prefix");
+
+    const std::wstring quoted_svc =
+        ServiceManager::normalize_service_image_path(L"\"C:\\Program Files\\App\\service.exe\" -run");
+    check(quoted_svc == L"C:\\Program Files\\App\\service.exe", "normalize quoted service command");
+
+    const auto target_services =
+        ServiceManager::find_target_services(L"D:\\Projects\\ObliteratorNonExistentSvcDir");
+    check(target_services.empty(), "find target services on non-existent path is empty");
+
+    const auto target_tasks =
+        ServiceManager::find_target_tasks(L"D:\\Projects\\ObliteratorNonExistentTaskDir");
+    check(target_tasks.empty(), "find target tasks on non-existent path is empty");
+}
+
 static void test_plan_structure() {
     Target target;
     target.name = L"SampleApp";
@@ -202,10 +221,14 @@ static void test_plan_structure() {
     Plan plan(target);
     plan.processes_to_terminate.push_back({1234, L"Sample.exe", L"D:\\Apps\\SampleApp\\Sample.exe", L"image path"});
     plan.locked_files_to_release.push_back({L"D:\\Apps\\SampleApp\\data.db", 5678, L"DataServer.exe"});
+    plan.services_to_remove.push_back({L"SampleSvc", L"Sample Service", L"D:\\Apps\\SampleApp\\svc.exe", false});
+    plan.tasks_to_remove.push_back({L"SampleUpdater", L"\\", L"D:\\Apps\\SampleApp\\updater.exe"});
 
     check(!plan.is_empty(), "plan is not empty");
     check(plan.processes_to_terminate.size() == 1, "1 process in plan");
     check(plan.locked_files_to_release.size() == 1, "1 locked file in plan");
+    check(plan.services_to_remove.size() == 1, "1 service in plan");
+    check(plan.tasks_to_remove.size() == 1, "1 task in plan");
     check(plan.directories_to_remove.size() == 1, "1 directory in plan");
     check(plan.directories_to_remove[0] == L"D:\\Apps\\SampleApp", "directory matches target root");
     check(plan.registry_keys_to_remove.size() == 1, "1 registry key in plan");
@@ -225,6 +248,7 @@ int main() {
     test_install_folder_deduction();
     test_process_management();
     test_unlocker();
+    test_service_manager();
     test_plan_structure();
 
     std::cout << "All tests passed successfully.\n";
