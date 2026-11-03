@@ -207,4 +207,31 @@ Result<void> SafetyValidator::validate_path(const std::wstring& raw_path) {
     return Result<void>::success();
 }
 
+bool SafetyValidator::is_protected_path(const std::wstring& raw_path) {
+    if (raw_path.empty()) {
+        return false;
+    }
+    const std::wstring normalized = normalize_path(raw_path);
+    if (normalized.empty() || is_drive_root(normalized)) {
+        return true;
+    }
+    const auto protected_list = get_protected_paths();
+    for (const auto& item : protected_list) {
+        if (item.path.empty()) {
+            continue;
+        }
+        if (PathHelper::is_same_or_subpath(item.path, normalized)) {
+            if (item.description.find(L"Windows") != std::wstring::npos ||
+                item.description.find(L"System32") != std::wstring::npos ||
+                PathHelper::is_same_or_subpath(normalized, item.path)) {
+                return true;
+            }
+        }
+        if (PathHelper::is_same_or_subpath(normalized, item.path)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace obliterator

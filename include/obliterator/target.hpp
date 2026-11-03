@@ -19,6 +19,7 @@ struct Target {
     std::wstring name;
     std::wstring publisher;
     std::wstring root_path;
+    std::wstring product_code;
     std::vector<TargetRegistryEntry> registry_entries;
     bool is_uwp{false};
     std::wstring uwp_package_full_name;

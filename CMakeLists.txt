@@ -18,6 +18,8 @@ add_library(obliterator_core STATIC
     include/obliterator/privileges.hpp
     include/obliterator/process.hpp
     include/obliterator/result.hpp
+    include/obliterator/confidence_config.hpp
+    include/obliterator/confidence_engine.hpp
     include/obliterator/registry_cleaner.hpp
     include/obliterator/leftovers.hpp
     include/obliterator/report.hpp
@@ -31,6 +33,7 @@ add_library(obliterator_core STATIC
     include/obliterator/portable.hpp
     include/obliterator/wiper.hpp
     src/cli.cpp
+    src/confidence_engine.cpp
     src/error.cpp
     src/leftovers.cpp
     src/log.cpp
