@@ -1,8 +1,10 @@
 #include "obliterator/error.hpp"
 #include "obliterator/handles.hpp"
+#include "obliterator/leftovers.hpp"
 #include "obliterator/plan.hpp"
 #include "obliterator/privileges.hpp"
 #include "obliterator/process.hpp"
+#include "obliterator/registry_cleaner.hpp"
 #include "obliterator/result.hpp"
 #include "obliterator/safety.hpp"
 #include "obliterator/service.hpp"
@@ -351,6 +353,72 @@ static void test_plan_structure() {
           "registry key matches");
 }
 
+static void test_registry_backup() {
+    namespace fs = std::filesystem;
+    const fs::path backup_dir = L"D:\\Projects\\obliterator\\build\\test_reg_backup";
+    fs::create_directories(backup_dir);
+    RegistryBackup::set_custom_backup_directory(backup_dir.wstring());
+    RegistryBackup::set_enabled(true);
+
+    const std::wstring test_key_path = L"Software\\ObliteratorUnitTestKey";
+    UniqueHKey test_key;
+    LSTATUS st = RegCreateKeyExW(HKEY_CURRENT_USER, test_key_path.c_str(), 0, nullptr,
+                                 0, KEY_READ | KEY_WRITE, nullptr, test_key.put(), nullptr);
+    check(st == ERROR_SUCCESS, "create test registry key");
+
+    const std::wstring val_data = L"TestStringData";
+    st = RegSetValueExW(test_key.get(), L"StringVal", 0, REG_SZ,
+                        reinterpret_cast<const BYTE*>(val_data.c_str()),
+                        static_cast<DWORD>((val_data.size() + 1) * sizeof(wchar_t)));
+    check(st == ERROR_SUCCESS, "set string value");
+
+    const DWORD dword_data = 0x12345678;
+    st = RegSetValueExW(test_key.get(), L"DwordVal", 0, REG_DWORD,
+                        reinterpret_cast<const BYTE*>(&dword_data), sizeof(DWORD));
+    check(st == ERROR_SUCCESS, "set dword value");
+
+    // Test exporting key to .reg
+    auto exp_key_res = RegistryBackup::export_key(HKEY_CURRENT_USER, test_key_path);
+    check(exp_key_res.has_value(), "export_key succeeds");
+    check(fs::exists(exp_key_res.value()), "exported .reg file exists on disk");
+    check(fs::file_size(exp_key_res.value()) > 0, "exported .reg file non-empty");
+
+    // Test exporting single value to .reg
+    auto exp_val_res = RegistryBackup::export_value(HKEY_CURRENT_USER, test_key_path, L"StringVal");
+    check(exp_val_res.has_value(), "export_value succeeds");
+    check(fs::exists(exp_val_res.value()), "exported value .reg file exists");
+
+    // Delete test key
+    test_key.reset();
+    auto del_res = RegistryCleaner::delete_key_tree(HKEY_CURRENT_USER, test_key_path);
+    check(del_res.has_value(), "delete test key tree succeeds");
+
+    // Clean up test backup files
+    fs::remove_all(backup_dir);
+}
+
+static void test_registry_cleaner_autorun() {
+    const std::wstring run_path = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    UniqueHKey run_key;
+    LSTATUS st = RegOpenKeyExW(HKEY_CURRENT_USER, run_path.c_str(), 0,
+                               KEY_READ | KEY_WRITE, run_key.put());
+    check(st == ERROR_SUCCESS, "open HKCU Run key");
+
+    const std::wstring val_name = L"ObliteratorTestAutorunEntry";
+    const std::wstring fake_cmd = L"\"D:\\Projects\\ObliteratorFakeApp\\app.exe\" --silent";
+    st = RegSetValueExW(run_key.get(), val_name.c_str(), 0, REG_SZ,
+                        reinterpret_cast<const BYTE*>(fake_cmd.c_str()),
+                        static_cast<DWORD>((fake_cmd.size() + 1) * sizeof(wchar_t)));
+    check(st == ERROR_SUCCESS, "set fake autorun value");
+
+    const auto found = RegistryCleaner::find_autorun_entries(L"D:\\Projects\\ObliteratorFakeApp");
+    check(!found.empty(), "found autorun entry for target path");
+    check(found[0].value_name == val_name, "matched autorun value name");
+
+    st = RegDeleteValueW(run_key.get(), val_name.c_str());
+    check(st == ERROR_SUCCESS, "cleaned up fake autorun value");
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -368,6 +436,8 @@ int main() {
     test_format_bytes();
     test_physical_wipe_tree();
     test_plan_structure();
+    test_registry_backup();
+    test_registry_cleaner_autorun();
 
     std::cout << "All tests passed successfully.\n";
     return 0;

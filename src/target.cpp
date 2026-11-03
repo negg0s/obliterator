@@ -264,12 +264,24 @@ Result<Target> TargetResolver::resolve(const std::wstring& input) {
         }
 
         target.registry_entries = find_registry_entries_for_path(norm);
+        for (const auto& reg_entry : target.registry_entries) {
+            UniqueHKey hKey;
+            if (RegOpenKeyExW(reg_entry.root_key, reg_entry.subkey_path.c_str(), 0,
+                              KEY_READ | reg_entry.sam_view, hKey.put()) == ERROR_SUCCESS) {
+                const std::wstring pub = query_registry_string(hKey.get(), L"Publisher");
+                if (!pub.empty()) {
+                    target.publisher = pub;
+                    break;
+                }
+            }
+        }
         return target;
     }
 
     // Name-based resolution via registry uninstall entries
     struct Candidate {
         std::wstring display_name;
+        std::wstring publisher;
         std::wstring root_path;
         TargetRegistryEntry entry;
     };
@@ -313,6 +325,7 @@ Result<Target> TargetResolver::resolve(const std::wstring& input) {
             const std::wstring install_loc = query_registry_string(subkey.get(), L"InstallLocation");
             const std::wstring display_icon = query_registry_string(subkey.get(), L"DisplayIcon");
             const std::wstring uninstall_str = query_registry_string(subkey.get(), L"UninstallString");
+            const std::wstring publisher = query_registry_string(subkey.get(), L"Publisher");
 
             const std::wstring deduced =
                 deduce_install_folder(install_loc, display_icon, uninstall_str);
@@ -337,6 +350,7 @@ Result<Target> TargetResolver::resolve(const std::wstring& input) {
             if (!duplicate) {
                 candidates.push_back({
                     display_name,
+                    publisher,
                     deduced,
                     {scope.root, std::wstring(kUninstallPath) + L"\\" + subkey_name, scope.sam, display_name}
                 });
@@ -359,6 +373,7 @@ Result<Target> TargetResolver::resolve(const std::wstring& input) {
 
     Target target;
     target.name = candidates[0].display_name;
+    target.publisher = candidates[0].publisher;
     target.root_path = candidates[0].root_path;
     target.registry_entries.push_back(candidates[0].entry);
 

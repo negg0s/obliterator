@@ -17,6 +17,7 @@ struct TargetRegistryEntry {
 
 struct Target {
     std::wstring name;
+    std::wstring publisher;
     std::wstring root_path;
     std::vector<TargetRegistryEntry> registry_entries;
 };

@@ -1,8 +1,10 @@
 #include "obliterator/error.hpp"
+#include "obliterator/leftovers.hpp"
 #include "obliterator/log.hpp"
 #include "obliterator/plan.hpp"
 #include "obliterator/privileges.hpp"
 #include "obliterator/process.hpp"
+#include "obliterator/registry_cleaner.hpp"
 #include "obliterator/service.hpp"
 #include "obliterator/target.hpp"
 #include "obliterator/unlocker.hpp"
@@ -20,11 +22,13 @@ struct CommandLineOptions {
     bool yes{false};
     bool verbose{false};
     bool no_handle_kill{false};
+    bool no_backup{false};
+    bool aggressive{false};
     uint32_t timeout_seconds{5};
 };
 
 static void print_usage() {
-    std::wcout << L"Usage: obliterator <target-name-or-path> [--dry-run] [--yes] [--verbose] [--timeout <sec>] [--no-handle-kill]\n\n"
+    std::wcout << L"Usage: obliterator <target-name-or-path> [options]\n\n"
                << L"Arguments:\n"
                << L"  <target-name-or-path>  Target directory or application name to wipe\n\n"
                << L"Options:\n"
@@ -33,6 +37,8 @@ static void print_usage() {
                << L"  --verbose, -v          Enable debug output\n"
                << L"  --timeout <sec>        Process kill wait timeout in seconds (default: 5)\n"
                << L"  --no-handle-kill       Disable remote file handle duplication and closure\n"
+               << L"  --no-backup            Disable registry export to .reg before deletion\n"
+               << L"  --aggressive           Delete possible leftovers matching heuristic\n"
                << L"  --help, -h             Display this help message\n";
 }
 
@@ -50,6 +56,10 @@ static Result<CommandLineOptions> parse_arguments(int argc, wchar_t* argv[]) {
             options.verbose = true;
         } else if (arg == L"--no-handle-kill") {
             options.no_handle_kill = true;
+        } else if (arg == L"--no-backup") {
+            options.no_backup = true;
+        } else if (arg == L"--aggressive") {
+            options.aggressive = true;
         } else if (arg == L"--timeout") {
             if (i + 1 < argc) {
                 try {
@@ -149,6 +159,48 @@ int wmain(int argc, wchar_t* argv[]) {
         plan.tasks_to_remove.push_back({task.name, task.folder_path, task.action_path});
     }
 
+    // Inspect registry autorun entries
+    const auto target_autoruns = RegistryCleaner::find_autorun_entries(target.root_path);
+    for (const auto& ar : target_autoruns) {
+        plan.registry_keys_to_remove.push_back({
+            ar.root_key,
+            ar.subkey_path + L" [" + ar.value_name + L"]",
+            ar.sam_view,
+            L"autorun value"
+        });
+    }
+
+    // Inspect shell verbs and context menu extensions
+    const auto target_shells = RegistryCleaner::find_shell_entries(target.root_path);
+    for (const auto& sh : target_shells) {
+        plan.registry_keys_to_remove.push_back({
+            sh.root_key,
+            sh.subkey_path,
+            0,
+            sh.is_clsid ? L"shell extension CLSID" : L"context menu verb"
+        });
+    }
+
+    // Inspect product and vendor keys
+    const auto target_prod_keys = RegistryCleaner::find_product_keys(target);
+    for (const auto& pk : target_prod_keys) {
+        plan.registry_keys_to_remove.push_back({
+            pk.root_key,
+            pk.subkey_path,
+            pk.sam_view,
+            L"product/vendor key"
+        });
+    }
+
+    // Inspect leftovers
+    const auto target_leftovers = LeftoversCleaner::find_leftovers(target);
+    for (const auto& left : target_leftovers) {
+        std::wstring type_str = (left.kind == LeftoverKind::Folder) ? L"FOLDER" :
+                                (left.kind == LeftoverKind::Shortcut) ? L"SHORTCUT" : L"FIREWALL";
+        std::wstring conf_str = (left.confidence == LeftoverConfidence::Definite) ? L"DEFINITE" : L"POSSIBLE";
+        plan.leftovers_to_remove.push_back({left.path_or_name, type_str, conf_str, left.detail});
+    }
+
     if (options.dry_run) {
         Logger::info(L"Dry-run mode active; displaying plan without making modifications");
         plan.print();
@@ -226,6 +278,37 @@ int wmain(int argc, wchar_t* argv[]) {
 
     if (!wipe_res) {
         Logger::warn(L"Some filesystem items could not be deleted: " + wipe_res.error().message());
+    }
+
+    Logger::info(L"Cleaning registry entries...");
+    RegistryCleanReport reg_report;
+    auto reg_res = RegistryCleaner::clean(target, reg_report, options.no_backup);
+
+    std::wcout << L"Registry summary: "
+               << reg_report.total_keys_deleted << L" keys deleted, "
+               << reg_report.total_values_deleted << L" values deleted, "
+               << reg_report.items_backed_up << L" backed up to .reg\n";
+
+    if (reg_report.items_backed_up > 0 && !reg_report.backup_directory.empty()) {
+        std::wcout << L"Backup location: " << reg_report.backup_directory << L"\n";
+    }
+
+    if (!reg_res) {
+        Logger::warn(L"Some registry items could not be deleted: " + reg_res.error().message());
+    }
+
+    Logger::info(L"Cleaning leftovers on disk and firewall rules...");
+    const auto left_report = LeftoversCleaner::clean_leftovers(target, options.aggressive);
+
+    std::wcout << L"Leftovers summary: "
+               << left_report.folders_deleted << L" folders deleted, "
+               << left_report.shortcuts_deleted << L" shortcuts deleted, "
+               << left_report.firewall_rules_deleted << L" firewall rules deleted\n";
+
+    if (left_report.possible_leftovers_skipped > 0) {
+        std::wcout << L"Possible leftovers skipped: "
+                   << left_report.possible_leftovers_skipped
+                   << L" (re-run with --aggressive to remove)\n";
     }
 
     return 0;

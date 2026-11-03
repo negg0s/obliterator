@@ -16,16 +16,20 @@ add_library(obliterator_core STATIC
     include/obliterator/privileges.hpp
     include/obliterator/process.hpp
     include/obliterator/result.hpp
+    include/obliterator/registry_cleaner.hpp
+    include/obliterator/leftovers.hpp
     include/obliterator/safety.hpp
     include/obliterator/service.hpp
     include/obliterator/target.hpp
     include/obliterator/unlocker.hpp
     include/obliterator/wiper.hpp
     src/error.cpp
+    src/leftovers.cpp
     src/log.cpp
     src/plan.cpp
     src/privileges.cpp
     src/process.cpp
+    src/registry_cleaner.cpp
     src/safety.cpp
     src/service.cpp
     src/target.cpp
@@ -44,6 +48,7 @@ target_link_libraries(obliterator_core PUBLIC
     taskschd
     ole32
     oleaut32
+    shell32
 )
 
 if(MSVC)

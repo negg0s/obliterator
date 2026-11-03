@@ -40,6 +40,13 @@ struct PlanRegistryKey {
     std::wstring description;
 };
 
+struct PlanLeftover {
+    std::wstring path_or_name;
+    std::wstring type;
+    std::wstring confidence;
+    std::wstring detail;
+};
+
 struct Plan {
     Target target;
     std::vector<PlanProcess> processes_to_terminate;
@@ -48,6 +55,7 @@ struct Plan {
     std::vector<PlanTask> tasks_to_remove;
     std::vector<std::wstring> directories_to_remove;
     std::vector<PlanRegistryKey> registry_keys_to_remove;
+    std::vector<PlanLeftover> leftovers_to_remove;
 
     explicit Plan(Target t);
 

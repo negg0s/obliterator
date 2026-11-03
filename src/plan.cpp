@@ -39,7 +39,8 @@ bool Plan::is_empty() const noexcept {
            services_to_remove.empty() &&
            tasks_to_remove.empty() &&
            directories_to_remove.empty() &&
-           registry_keys_to_remove.empty();
+           registry_keys_to_remove.empty() &&
+           leftovers_to_remove.empty();
 }
 
 void Plan::print() const {
@@ -106,6 +107,18 @@ void Plan::print() const {
                        << L"\\" << reg.subkey_path;
             if (!reg.description.empty()) {
                 std::wcout << L" (" << reg.description << L")";
+            }
+            std::wcout << L"\n";
+        }
+    }
+
+    if (!leftovers_to_remove.empty()) {
+        std::wcout << L"\nLeftovers to inspect/remove (" << leftovers_to_remove.size() << L"):\n";
+        for (const auto& left : leftovers_to_remove) {
+            std::wcout << L"  [" << left.type << L"] [" << left.confidence << L"] "
+                       << left.path_or_name;
+            if (!left.detail.empty()) {
+                std::wcout << L" (" << left.detail << L")";
             }
             std::wcout << L"\n";
         }
