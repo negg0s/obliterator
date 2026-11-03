@@ -29,7 +29,9 @@ struct ProcessFailure {
     DWORD pid{0};
     std::wstring name;
     std::wstring image_path;
+    DWORD error_code{0};
     std::wstring reason;
+    bool is_protected{false};
 };
 
 struct ProcessReport {
@@ -42,6 +44,8 @@ struct ProcessReport {
 class ProcessManager {
 public:
     static std::vector<ProcessInfo> find_target_processes(const std::wstring& target_root_path);
+
+    static size_t suspend_target_processes(const std::wstring& target_root_path);
 
     static ProcessReport terminate_target_processes(const std::wstring& target_root_path,
                                                    uint32_t timeout_seconds = 5);

@@ -323,6 +323,35 @@ std::vector<ProcessInfo> ProcessManager::find_target_processes(const std::wstrin
     return results;
 }
 
+size_t ProcessManager::suspend_target_processes(const std::wstring& target_root_path) {
+    if (target_root_path.empty()) {
+        return 0;
+    }
+
+    const auto targets = find_target_processes(target_root_path);
+    size_t suspended_count = 0;
+
+    for (const auto& proc : targets) {
+        UniqueHandle h(OpenProcess(PROCESS_SUSPEND_RESUME | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, proc.pid));
+        if (!h) {
+            continue;
+        }
+
+        FILETIME current_creation{};
+        if (!query_process_times(h.get(), &current_creation) ||
+            !times_equal(current_creation, proc.creation_time)) {
+            continue;
+        }
+
+        if (NtSuspendProcess(h.get()) >= 0) {
+            suspended_count++;
+            Logger::debug(L"Frozen process: " + proc.name + L" (PID: " + std::to_wstring(proc.pid) + L")");
+        }
+    }
+
+    return suspended_count;
+}
+
 ProcessReport ProcessManager::terminate_target_processes(const std::wstring& target_root_path,
                                                        uint32_t timeout_seconds) {
     ProcessReport report;
@@ -354,13 +383,23 @@ ProcessReport ProcessManager::terminate_target_processes(const std::wstring& tar
             UniqueHandle h(OpenProcess(access, FALSE, proc.pid));
             if (!h) {
                 const DWORD err = GetLastError();
+                const bool is_prot = (err == ERROR_ACCESS_DENIED);
                 report.failed++;
                 report.failures.push_back({
                     proc.pid,
                     proc.name,
                     proc.image_path,
-                    Win32Error::from_code(err).message()
+                    err,
+                    Win32Error::from_code(err).message(),
+                    is_prot
                 });
+
+                if (is_prot) {
+                    Logger::warn(L"Protected process detected: " + proc.name + L" (PID: " +
+                                 std::to_wstring(proc.pid) + L"), error " + std::to_wstring(err) +
+                                 L": " + Win32Error::from_code(err).message() +
+                                 L" (kernel callback or PPL protection active)");
+                }
                 continue;
             }
 
@@ -390,13 +429,22 @@ ProcessReport ProcessManager::terminate_target_processes(const std::wstring& tar
                     exit_code != STILL_ACTIVE) {
                     report.killed++;
                 } else {
+                    const bool is_prot = (err == ERROR_ACCESS_DENIED);
                     report.failed++;
                     report.failures.push_back({
                         item.info.pid,
                         item.info.name,
                         item.info.image_path,
-                        Win32Error::from_code(err).message()
+                        err,
+                        Win32Error::from_code(err).message(),
+                        is_prot
                     });
+
+                    if (is_prot) {
+                        Logger::warn(L"Protected process could not be terminated: " + item.info.name +
+                                     L" (PID: " + std::to_wstring(item.info.pid) + L"), error " +
+                                     std::to_wstring(err) + L": " + Win32Error::from_code(err).message());
+                    }
                 }
             }
         }
