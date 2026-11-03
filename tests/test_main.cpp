@@ -12,7 +12,10 @@
 #include "obliterator/service.hpp"
 #include "obliterator/target.hpp"
 #include "obliterator/ui.hpp"
+#include "obliterator/uninstaller.hpp"
 #include "obliterator/unlocker.hpp"
+#include "obliterator/uwp.hpp"
+#include "obliterator/portable.hpp"
 #include "obliterator/wiper.hpp"
 
 #include <crtdbg.h>
@@ -658,6 +661,85 @@ static void test_malformed_path_exception_regression() {
     }
 }
 
+static void test_uninstall_string_parsing() {
+    // 1. Quoted path with arguments
+    auto p1 = NativeUninstaller::parse_command(L"\"C:\\Program Files\\Example App\\unins000.exe\" /SILENT /NORESTART");
+    check(p1.is_valid, "p1 is valid");
+    check(p1.executable_path == L"C:\\Program Files\\Example App\\unins000.exe", "p1 path extracted");
+    check(p1.arguments == L"/SILENT /NORESTART", "p1 args extracted");
+
+    // 2. Quoted path without arguments
+    auto p2 = NativeUninstaller::parse_command(L"\"C:\\Program Files (x86)\\Vendor\\App\\uninstall.exe\"");
+    check(p2.is_valid, "p2 is valid");
+    check(p2.executable_path == L"C:\\Program Files (x86)\\Vendor\\App\\uninstall.exe", "p2 path extracted");
+    check(p2.arguments.empty(), "p2 args empty");
+
+    // 3. Unquoted path with spaces before .exe
+    auto p3 = NativeUninstaller::parse_command(L"C:\\Program Files\\App\\unins000.exe /VERYSILENT");
+    check(p3.is_valid, "p3 is valid");
+    check(p3.executable_path == L"C:\\Program Files\\App\\unins000.exe", "p3 path extracted");
+    check(p3.arguments == L"/VERYSILENT", "p3 args extracted");
+
+    // 4. Unquoted simple path
+    auto p4 = NativeUninstaller::parse_command(L"C:\\Tools\\uninst.exe /S");
+    check(p4.is_valid, "p4 is valid");
+    check(p4.executable_path == L"C:\\Tools\\uninst.exe", "p4 path extracted");
+    check(p4.arguments == L"/S", "p4 args extracted");
+
+    // 5. MSI command with /I
+    std::wstring msi_cmd = L"MsiExec.exe /I{12345678-ABCD-1234-ABCD-1234567890AB}";
+    std::wstring pc1 = NativeUninstaller::extract_product_code(msi_cmd);
+    check(pc1 == L"{12345678-ABCD-1234-ABCD-1234567890AB}", "MSI product code extracted");
+    auto info_msi = NativeUninstaller::detect_from_strings(msi_cmd, L"", L"");
+    check(info_msi.type == UninstallerType::Msi, "MSI type detected");
+    check(info_msi.quiet_command == L"msiexec.exe /x {12345678-ABCD-1234-ABCD-1234567890AB} /qn /norestart", "MSI quiet command formatted");
+
+    // 6. MSI command with lowercase GUID, spaces, and quoted path
+    std::wstring msi_cmd2 = L"\"C:\\Windows\\System32\\msiexec.exe\" /x {abcdef01-2345-6789-abcd-ef0123456789}";
+    std::wstring pc2 = NativeUninstaller::extract_product_code(msi_cmd2);
+    check(pc2 == L"{ABCDEF01-2345-6789-ABCD-EF0123456789}", "lowercase MSI product code upper-cased");
+    auto info_msi2 = NativeUninstaller::detect_from_strings(msi_cmd2, L"", L"");
+    check(info_msi2.type == UninstallerType::Msi, "MSI2 type detected");
+
+    // 7. Inno Setup detection from unins000.exe
+    auto info_inno = NativeUninstaller::detect_from_strings(L"\"C:\\Program Files\\InnoApp\\unins000.exe\"", L"", L"");
+    check(info_inno.type == UninstallerType::InnoSetup, "Inno Setup detected");
+    check(info_inno.quiet_command == L"\"C:\\Program Files\\InnoApp\\unins000.exe\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART", "Inno quiet flags appended");
+
+    // 8. Inno Setup with existing parameters
+    auto info_inno2 = NativeUninstaller::detect_from_strings(L"\"C:\\Games\\Game\\unins001.exe\" /param=1", L"", L"");
+    check(info_inno2.type == UninstallerType::InnoSetup, "Inno Setup with params detected");
+
+    // 9. NSIS uninst.exe
+    auto info_nsis = NativeUninstaller::detect_from_strings(L"\"C:\\Program Files\\NSISApp\\uninst.exe\"", L"", L"");
+    check(info_nsis.type == UninstallerType::Nsis, "NSIS detected");
+    check(info_nsis.quiet_command == L"\"C:\\Program Files\\NSISApp\\uninst.exe\" /S", "NSIS quiet flag /S appended");
+
+    // 10. InstallShield setup.exe
+    auto info_is = NativeUninstaller::detect_from_strings(
+        L"\"C:\\Program Files\\InstallShield Installation Information\\{11111111-2222-3333-4444-555555555555}\\setup.exe\" -runfromtemp -l0x0409 -removeonly",
+        L"", L"");
+    check(info_is.type == UninstallerType::InstallShield, "InstallShield detected");
+    check(info_is.quiet_command.find(L"/s") != std::wstring::npos, "InstallShield quiet flag /s present");
+
+    // 11. Rundll32 uninstaller
+    auto p_rundll = NativeUninstaller::parse_command(L"rundll32.exe \"C:\\Program Files\\Vendor\\custom.dll\",UninstallEntry");
+    check(p_rundll.is_valid, "rundll parsed");
+    check(p_rundll.executable_path == L"rundll32.exe", "rundll exe extracted");
+    check(p_rundll.arguments == L"\"C:\\Program Files\\Vendor\\custom.dll\",UninstallEntry", "rundll args extracted");
+
+    // 12. Unknown uninstaller format must not be assigned a blind quiet command
+    auto info_unknown = NativeUninstaller::detect_from_strings(L"\"C:\\Custom\\unknown_helper.bat\" do_uninstall", L"", L"");
+    check(info_unknown.type == UninstallerType::Unknown, "Unknown uninstaller type detected");
+    check(info_unknown.quiet_command.empty(), "Unknown quiet command empty to prevent blind execution");
+
+    // 13. Path with commas in folder name
+    auto p_comma = NativeUninstaller::parse_command(L"\"C:\\Apps\\Test, 1\\uninstall.exe\" -arg");
+    check(p_comma.is_valid, "comma path valid");
+    check(p_comma.executable_path == L"C:\\Apps\\Test, 1\\uninstall.exe", "comma path correctly preserved");
+    check(p_comma.arguments == L"-arg", "comma path arg extracted");
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -715,6 +797,8 @@ int main() {
     test_surrogate_pair_to_lower_regression();
     std::wcout << L"[RUN] test_malformed_path_exception_regression\n" << std::flush;
     test_malformed_path_exception_regression();
+    std::wcout << L"[RUN] test_uninstall_string_parsing\n" << std::flush;
+    test_uninstall_string_parsing();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;
