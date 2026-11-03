@@ -1,11 +1,12 @@
 #include "obliterator/error.hpp"
 #include "obliterator/log.hpp"
+#include "obliterator/plan.hpp"
 #include "obliterator/privileges.hpp"
+#include "obliterator/target.hpp"
 
 #include <iostream>
 #include <string>
 #include <string_view>
-#include <vector>
 
 namespace obliterator {
 
@@ -21,7 +22,7 @@ static void print_usage() {
                << L"Arguments:\n"
                << L"  <target-name-or-path>  Target directory or application name to wipe\n\n"
                << L"Options:\n"
-               << L"  --dry-run              Inspect without modifying the system\n"
+               << L"  --dry-run              Inspect and plan without modifying the system\n"
                << L"  --yes, -y              Skip confirmation prompt\n"
                << L"  --verbose, -v          Enable debug output\n"
                << L"  --help, -h             Display this help message\n";
@@ -77,11 +78,7 @@ int wmain(int argc, wchar_t* argv[]) {
     Logger::set_verbose(options.verbose);
 
     Logger::debug(L"Verbosity enabled");
-    Logger::info(std::wstring(L"Target: ") + options.target);
-
-    if (options.dry_run) {
-        Logger::info(L"Dry-run mode active; filesystem and registry will not be modified");
-    }
+    Logger::debug(std::wstring(L"Input target: ") + options.target);
 
     auto priv_res = enable_required_privileges();
     if (!priv_res) {
@@ -91,5 +88,21 @@ int wmain(int argc, wchar_t* argv[]) {
         Logger::debug(L"Required privileges enabled");
     }
 
+    auto target_res = TargetResolver::resolve(options.target);
+    if (!target_res) {
+        Logger::error(L"Failed to resolve target: " + target_res.error().message());
+        return 1;
+    }
+
+    const auto& target = target_res.value();
+    Plan plan(target);
+
+    if (options.dry_run) {
+        Logger::info(L"Dry-run mode active; displaying plan without making modifications");
+        plan.print();
+        return 0;
+    }
+
+    plan.print();
     return 0;
 }
