@@ -10,6 +10,7 @@
 
 #include "obliterator/result.hpp"
 #include "obliterator/target.hpp"
+#include "obliterator/ui.hpp"
 
 #include <string>
 #include <vector>
@@ -45,7 +46,11 @@ struct LeftoversReport {
 class LeftoversCleaner {
 public:
     static std::vector<LeftoverItem> find_leftovers(const Target& target);
-    static LeftoversReport clean_leftovers(const Target& target, bool aggressive = false);
+    static LeftoversReport clean_leftovers(
+        const Target& target,
+        bool aggressive = false,
+        const std::vector<InstalledAppInfo>& other_apps = {}
+    );
 
     static std::vector<std::wstring> find_firewall_rules(const std::wstring& target_root);
     static size_t remove_firewall_rules(const std::vector<std::wstring>& rule_names);

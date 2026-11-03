@@ -8,6 +8,8 @@
 #endif
 #include <windows.h>
 
+#include "obliterator/confidence_engine.hpp"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -70,6 +72,9 @@ struct FinalReport {
 
     // Pending reboot
     std::vector<std::wstring> pending_reboot_items;
+
+    // Confidence-scored artifacts
+    std::vector<ScoredArtifact> artifacts;
 
     void print_text() const;
     void print_json() const;

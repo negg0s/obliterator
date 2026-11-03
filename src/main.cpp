@@ -1,4 +1,5 @@
 #include "obliterator/cli.hpp"
+#include "obliterator/confidence_engine.hpp"
 #include "obliterator/error.hpp"
 #include "obliterator/leftovers.hpp"
 #include "obliterator/log.hpp"
@@ -66,6 +67,12 @@ int wmain(int argc, wchar_t* argv[]) {
     if (!options.scan_portable_dir.empty()) {
         auto candidates = PortableScanner::scan(options.scan_portable_dir);
         PortableScanner::print_report(candidates, options.json);
+        return ExitCode::Success;
+    }
+
+    if (!options.explain_artifact.empty()) {
+        const auto apps = UserInterface::enumerate_installed_apps();
+        ConfidenceEngine::explain(options.explain_artifact, apps);
         return ExitCode::Success;
     }
 
@@ -297,13 +304,20 @@ int wmain(int argc, wchar_t* argv[]) {
         });
     }
 
-    // 8. Discover leftovers
-    const auto target_leftovers = LeftoversCleaner::find_leftovers(target);
-    for (const auto& left : target_leftovers) {
-        std::wstring type_str = (left.kind == LeftoverKind::Folder) ? L"FOLDER" :
-                                (left.kind == LeftoverKind::Shortcut) ? L"SHORTCUT" : L"FIREWALL";
-        std::wstring conf_str = (left.confidence == LeftoverConfidence::Definite) ? L"DEFINITE" : L"POSSIBLE";
-        plan.leftovers_to_remove.push_back({left.path_or_name, type_str, conf_str, left.detail});
+    // 8. Discover leftovers with confidence scoring
+    const auto all_installed_apps = UserInterface::enumerate_installed_apps();
+    const auto scored_artifacts = ConfidenceEngine::discover_artifacts(target, all_installed_apps);
+    for (const auto& art : scored_artifacts) {
+        if (art.category == ArtifactConfidenceCategory::Skip) {
+            continue;
+        }
+        std::wstring conf_str = (art.category == ArtifactConfidenceCategory::Safe) ? L"SAFE" : L"REVIEW";
+        plan.leftovers_to_remove.push_back({
+            art.identifier,
+            art.kind_string(),
+            conf_str,
+            L"Score: " + std::to_wstring(art.score)
+        });
     }
 
     if (options.dry_run) {
@@ -323,6 +337,7 @@ int wmain(int argc, wchar_t* argv[]) {
     FinalReport final_report;
     final_report.target_name = target.name;
     final_report.target_root = target.root_path;
+    final_report.artifacts = scored_artifacts;
 
     // Phase 1: Terminate target processes
     if (!plan.processes_to_terminate.empty()) {
@@ -398,7 +413,7 @@ int wmain(int argc, wchar_t* argv[]) {
 
     // Phase 6: Clean leftovers on disk and firewall rules
     Logger::info(L"Cleaning leftovers on disk and firewall rules...");
-    const auto left_report = LeftoversCleaner::clean_leftovers(target, options.aggressive);
+    const auto left_report = LeftoversCleaner::clean_leftovers(target, options.aggressive, all_installed_apps);
 
     final_report.folders_deleted = left_report.folders_deleted;
     final_report.shortcuts_deleted = left_report.shortcuts_deleted;

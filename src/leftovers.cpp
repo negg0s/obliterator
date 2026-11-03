@@ -1,4 +1,5 @@
 #include "obliterator/leftovers.hpp"
+#include "obliterator/confidence_engine.hpp"
 #include "obliterator/handles.hpp"
 #include "obliterator/log.hpp"
 #include "obliterator/path.hpp"
@@ -324,7 +325,11 @@ std::vector<LeftoverItem> LeftoversCleaner::find_leftovers(const Target& target)
     return items;
 }
 
-LeftoversReport LeftoversCleaner::clean_leftovers(const Target& target, bool aggressive) {
+LeftoversReport LeftoversCleaner::clean_leftovers(
+    const Target& target,
+    bool aggressive,
+    const std::vector<InstalledAppInfo>& other_apps
+) {
     namespace fs = std::filesystem;
     LeftoversReport report;
 
@@ -332,10 +337,29 @@ LeftoversReport LeftoversCleaner::clean_leftovers(const Target& target, bool agg
     std::vector<std::wstring> firewall_rules_to_remove;
 
     for (const auto& item : items) {
-        if (item.confidence == LeftoverConfidence::Possible && !aggressive) {
+        ArtifactKind k = ArtifactKind::Folder;
+        std::wstring ref_path;
+        if (item.kind == LeftoverKind::Shortcut) {
+            k = ArtifactKind::Shortcut;
+            ref_path = resolve_shortcut_target(item.path_or_name);
+        } else if (item.kind == LeftoverKind::FirewallRule) {
+            k = ArtifactKind::FirewallRule;
+            ref_path = target.root_path;
+        }
+
+        ScoredArtifact scored = ConfidenceEngine::evaluate(item.path_or_name, k, target, other_apps, ref_path);
+
+        if (scored.category == ArtifactConfidenceCategory::Skip) {
             report.possible_leftovers_skipped++;
-            Logger::warn(L"Possible leftover: " + item.path_or_name +
-                         L" (" + item.detail + L") - skipped (use --aggressive to remove)");
+            Logger::warn(L"Leftover skipped (confidence score " + std::to_wstring(scored.score) +
+                         L", category SKIP): " + item.path_or_name);
+            continue;
+        }
+
+        if (scored.category == ArtifactConfidenceCategory::Review && !aggressive) {
+            report.possible_leftovers_skipped++;
+            Logger::warn(L"Leftover review required (score " + std::to_wstring(scored.score) +
+                         L", category REVIEW): " + item.path_or_name + L" - skipped (use --aggressive to remove)");
             continue;
         }
 

@@ -135,7 +135,30 @@ void FinalReport::print_json() const {
         }
     }
 
-    std::wcout << L"]\n}\n";
+    std::wcout << L"],\n  \"artifacts\": [\n";
+    for (size_t i = 0; i < artifacts.size(); ++i) {
+        const auto& art = artifacts[i];
+        std::wcout << L"    {\n"
+                   << L"      \"identifier\": \"" << escape_json(art.identifier) << L"\",\n"
+                   << L"      \"kind\": \"" << escape_json(art.kind_string()) << L"\",\n"
+                   << L"      \"score\": " << art.score << L",\n"
+                   << L"      \"category\": \"" << escape_json(art.category_string()) << L"\",\n"
+                   << L"      \"is_protected\": " << (art.is_protected ? L"true" : L"false") << L",\n"
+                   << L"      \"referenced_by_other_app\": " << (art.referenced_by_other_app ? L"true" : L"false") << L",\n"
+                   << L"      \"conflicting_app_name\": \"" << escape_json(art.conflicting_app_name) << L"\",\n"
+                   << L"      \"reasons\": [\n";
+        for (size_t j = 0; j < art.reasons.size(); ++j) {
+            const auto& r = art.reasons[j];
+            std::wcout << L"        {\n"
+                       << L"          \"rule\": \"" << escape_json(r.rule_id) << L"\",\n"
+                       << L"          \"weight\": " << r.weight << L",\n"
+                       << L"          \"description\": \"" << escape_json(r.description) << L"\"\n"
+                       << L"        }" << (j + 1 < art.reasons.size() ? L"," : L"") << L"\n";
+        }
+        std::wcout << L"      ]\n"
+                   << L"    }" << (i + 1 < artifacts.size() ? L"," : L"") << L"\n";
+    }
+    std::wcout << L"  ]\n}\n";
 }
 
 } // namespace obliterator

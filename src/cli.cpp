@@ -24,6 +24,7 @@ void CommandLineParser::print_usage() {
                << L"  --native-only          Run native uninstaller only, skip forced obliteration\n"
                << L"  --native-timeout <sec> Native uninstaller wait timeout in seconds (default: 120)\n"
                << L"  --scan-portable <dir>  Scan directory for portable applications\n"
+               << L"  --explain <artifact>   Explain confidence score and reasons for an artifact\n"
                << L"  --install-menu         Add 'Force Obliterate' to folder context menu in HKCU\n"
                << L"  --uninstall-menu       Remove 'Force Obliterate' from folder context menu\n"
                << L"  --help, -h             Display this help message\n";
@@ -72,6 +73,13 @@ Result<CommandLineOptions> CommandLineParser::parse(const std::vector<std::wstri
                 options.scan_portable_dir = args[++i];
             } else {
                 options.scan_portable_dir = L".";
+            }
+        } else if (arg == L"--explain") {
+            if (i + 1 < args.size()) {
+                options.explain_artifact = args[++i];
+            } else {
+                Logger::error(L"Missing artifact argument for --explain");
+                return Win32Error::from_code(ERROR_INVALID_PARAMETER);
             }
         } else if (arg == L"--install-menu") {
             options.install_menu = true;
