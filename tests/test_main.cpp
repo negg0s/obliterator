@@ -1,6 +1,7 @@
 #include "obliterator/error.hpp"
 #include "obliterator/handles.hpp"
 #include "obliterator/leftovers.hpp"
+#include "obliterator/path.hpp"
 #include "obliterator/plan.hpp"
 #include "obliterator/privileges.hpp"
 #include "obliterator/process.hpp"
@@ -586,6 +587,77 @@ static void test_integration_blocker_and_wipe() {
     fs::remove_all(sandbox);
 }
 
+static void test_path_component_matching_regression() {
+    // Regression check: C:\Apps\Foo must NOT match C:\Apps\FooBar
+    check(!PathHelper::is_same_or_subpath(L"C:\\Apps\\Foo", L"C:\\Apps\\FooBar"),
+          "Foo does not match FooBar");
+    check(PathHelper::is_same_or_subpath(L"C:\\Apps\\Foo", L"C:\\Apps\\Foo\\Sub\\app.exe"),
+          "Foo matches Foo\\Sub\\app.exe");
+    check(PathHelper::is_same_or_subpath(L"C:\\Apps\\Foo", L"C:\\Apps\\Foo"),
+          "Foo matches Foo exactly");
+    check(PathHelper::is_same_or_subpath(L"c:/apps/foo/", L"C:\\APPS\\FOO\\sub"),
+          "slash and case differences handled correctly");
+
+    // Regression check: contains_path_reference inside command lines
+    check(!PathHelper::contains_path_reference(L"\"C:\\Apps\\FooBar\\app.exe\" -arg", L"C:\\Apps\\Foo"),
+          "FooBar command does not match Foo target");
+    check(PathHelper::contains_path_reference(L"\"C:\\Apps\\Foo\\app.exe\" -arg", L"C:\\Apps\\Foo"),
+          "Foo command matches Foo target");
+    check(PathHelper::contains_path_reference(L"C:\\Apps\\Foo\\app.exe", L"C:\\Apps\\Foo"),
+          "unquoted Foo path matches");
+    check(!PathHelper::contains_path_reference(L"C:\\Apps\\FooBar\\app.exe", L"C:\\Apps\\Foo"),
+          "unquoted FooBar path does not match");
+}
+
+static void test_service_image_path_with_dots_regression() {
+    // Path containing .exe in directory name must not truncate at directory boundary
+    const std::wstring p1 = ServiceManager::normalize_service_image_path(L"C:\\Tools.exe.backup\\sub\\svc.exe -run");
+    check(p1 == L"C:\\Tools.exe.backup\\sub\\svc.exe", "dot exe in folder not truncated");
+
+    const std::wstring p2 = ServiceManager::normalize_service_image_path(L"\"C:\\My.sys.dir\\driver.sys\" /d");
+    check(p2 == L"C:\\My.sys.dir\\driver.sys", "dot sys in folder not truncated");
+}
+
+static void test_unique_find_handle_regression() {
+    namespace fs = std::filesystem;
+    const fs::path test_dir = L"D:\\Projects\\obliterator\\build\\test_find_handle";
+    fs::create_directories(test_dir);
+    {
+        std::ofstream out(test_dir / L"file.tmp");
+        out << "test";
+    }
+
+    WIN32_FIND_DATAW fd{};
+    std::wstring pattern = test_dir.wstring() + L"\\*";
+    UniqueFindHandle h(FindFirstFileW(pattern.c_str(), &fd));
+    check(h.is_valid(), "UniqueFindHandle valid");
+    check(static_cast<bool>(h), "UniqueFindHandle bool conversion true");
+
+    h.reset();
+    check(!h.is_valid(), "UniqueFindHandle closed cleanly via FindClose");
+
+    fs::remove_all(test_dir);
+}
+
+static void test_surrogate_pair_to_lower_regression() {
+    // Deseret Capital Letter Long I (U+10400) surrogate pair: D801 DC00
+    // Lowercase is Deseret Small Letter Long I (U+10428): D801 DC28
+    const std::wstring upper = L"\xD801\xDC00";
+    const std::wstring lower = PathHelper::to_lower_unicode(upper);
+    check(lower == L"\xD801\xDC28", "Unicode surrogate pair case folded properly");
+}
+
+static void test_malformed_path_exception_regression() {
+    // Malformed paths with illegal NT device characters or raw prefixes must not throw std::filesystem_error
+    try {
+        const std::wstring malformed = L"\\\\?\\;\\bad:path*?\\test";
+        (void)TargetResolver::deduce_install_folder(malformed, malformed, malformed);
+        (void)TargetResolver::resolve(malformed);
+    } catch (const std::exception& e) {
+        check(false, e.what());
+    }
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -633,6 +705,16 @@ int main() {
     test_target_name_resolution_mock();
     std::wcout << L"[RUN] test_integration_blocker_and_wipe\n" << std::flush;
     test_integration_blocker_and_wipe();
+    std::wcout << L"[RUN] test_path_component_matching_regression\n" << std::flush;
+    test_path_component_matching_regression();
+    std::wcout << L"[RUN] test_service_image_path_with_dots_regression\n" << std::flush;
+    test_service_image_path_with_dots_regression();
+    std::wcout << L"[RUN] test_unique_find_handle_regression\n" << std::flush;
+    test_unique_find_handle_regression();
+    std::wcout << L"[RUN] test_surrogate_pair_to_lower_regression\n" << std::flush;
+    test_surrogate_pair_to_lower_regression();
+    std::wcout << L"[RUN] test_malformed_path_exception_regression\n" << std::flush;
+    test_malformed_path_exception_regression();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;
