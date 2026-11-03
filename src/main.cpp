@@ -24,6 +24,7 @@
 #include "obliterator/quarantine.hpp"
 #include "obliterator/audit.hpp"
 #include "obliterator/crypto.hpp"
+#include "obliterator/diagnose.hpp"
 #include "obliterator/wiper.hpp"
 #include "obliterator/tui.hpp"
 #include "obliterator/executor.hpp"
@@ -53,6 +54,17 @@ int wmain(int argc, wchar_t* argv[]) {
     Logger::set_verbose(options.verbose);
     if (options.json) {
         Logger::set_json_mode(true);
+    }
+
+    if (options.diagnose) {
+        enable_required_privileges();
+        auto res = SystemDiagnostics::write_report_to_file(options.diagnose_output_file);
+        if (!res) {
+            Logger::error(L"Failed to generate diagnostic report: " + res.error().message());
+            return ExitCode::Error;
+        }
+        std::wcout << L"Diagnostic report saved to: " << options.diagnose_output_file << L"\n";
+        return ExitCode::Success;
     }
 
     if (options.list_sessions) {

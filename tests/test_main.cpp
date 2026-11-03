@@ -28,6 +28,7 @@
 #include "obliterator/unlocker.hpp"
 #include "obliterator/uwp.hpp"
 #include "obliterator/wiper.hpp"
+#include "obliterator/diagnose.hpp"
 #include "obliterator/tui.hpp"
 #include "obliterator/tui_model.hpp"
 
@@ -1687,6 +1688,18 @@ static void test_tui_model_confirm_dialog() {
     check(model.get_current_screen() == TuiScreen::List, "returned to List");
 }
 
+static void test_system_diagnostics_sanitization() {
+    std::wstring raw = L"Error in C:\\Users\\Alice\\AppData\\Local\\Temp and user SID S-1-5-21-123456789-987654321-1001";
+    std::wstring sanitized = SystemDiagnostics::sanitize_pii(raw);
+    check(sanitized.find(L"Alice") == std::wstring::npos, "username sanitized");
+    check(sanitized.find(L"<user>") != std::wstring::npos, "user tag present");
+    check(sanitized.find(L"<user-sid>") != std::wstring::npos, "user sid sanitized");
+
+    auto report = SystemDiagnostics::collect_report();
+    check(report.has_value(), "collect diagnostic report");
+    check(!report.value().empty(), "diagnostic report is non-empty");
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -1774,6 +1787,8 @@ int main() {
     test_tui_model_plan_exclusions();
     std::wcout << L"[RUN] test_tui_model_confirm_dialog\n" << std::flush;
     test_tui_model_confirm_dialog();
+    std::wcout << L"[RUN] test_system_diagnostics_sanitization\n" << std::flush;
+    test_system_diagnostics_sanitization();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;

@@ -38,6 +38,7 @@ void CommandLineParser::print_usage() {
                << L"  --purge-quarantine <id|--older-than Nd> Purge quarantine session or sessions older than N days\n"
                << L"  --install-menu         Add 'Force Obliterate' to folder context menu in HKCU\n"
                << L"  --uninstall-menu       Remove 'Force Obliterate' from folder context menu\n"
+               << L"  --diagnose [file]      Collect sanitized system diagnostics for bug reports\n"
                << L"  --help, -h             Display this help message\n";
 }
 
@@ -141,6 +142,13 @@ Result<CommandLineOptions> CommandLineParser::parse(const std::vector<std::wstri
             options.install_menu = true;
         } else if (arg == L"--uninstall-menu") {
             options.uninstall_menu = true;
+        } else if (arg == L"--diagnose") {
+            options.diagnose = true;
+            if (i + 1 < args.size() && !args[i + 1].starts_with(L"-")) {
+                options.diagnose_output_file = args[++i];
+            } else {
+                options.diagnose_output_file = L"obliterator-diagnose.txt";
+            }
         } else if (arg == L"--timeout") {
             if (i + 1 < args.size()) {
                 try {

@@ -38,6 +38,8 @@ struct CommandLineOptions {
     bool list_sessions{false};
     std::wstring restore_session_id;
     std::wstring purge_quarantine_arg;
+    bool diagnose{false};
+    std::wstring diagnose_output_file;
 };
 
 class CommandLineParser {

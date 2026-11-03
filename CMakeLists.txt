@@ -66,6 +66,7 @@ add_library(obliterator_core STATIC
     include/obliterator/safe_mode.hpp
     include/obliterator/restore_point.hpp
     include/obliterator/crypto.hpp
+    include/obliterator/diagnose.hpp
     include/obliterator/audit.hpp
     include/obliterator/quarantine.hpp
     include/obliterator/wiper.hpp
@@ -91,6 +92,7 @@ add_library(obliterator_core STATIC
     src/safe_mode.cpp
     src/restore_point.cpp
     src/crypto.cpp
+    src/diagnose.cpp
     src/audit.cpp
     src/quarantine.cpp
     src/safety.cpp
