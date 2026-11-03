@@ -1,5 +1,6 @@
 #include "obliterator/cli.hpp"
 #include "obliterator/confidence_engine.hpp"
+#include "obliterator/defuse.hpp"
 #include "obliterator/error.hpp"
 #include "obliterator/leftovers.hpp"
 #include "obliterator/log.hpp"
@@ -10,6 +11,8 @@
 #include "obliterator/profile.hpp"
 #include "obliterator/registry_cleaner.hpp"
 #include "obliterator/report.hpp"
+#include "obliterator/resume.hpp"
+#include "obliterator/safe_mode.hpp"
 #include "obliterator/safety.hpp"
 #include "obliterator/service.hpp"
 #include "obliterator/target.hpp"
@@ -44,6 +47,16 @@ int wmain(int argc, wchar_t* argv[]) {
     Logger::set_verbose(options.verbose);
     if (options.json) {
         Logger::set_json_mode(true);
+    }
+
+    if (options.resume) {
+        enable_required_privileges();
+        return ResumeManager::execute_resume();
+    }
+
+    if (options.safe_mode_plan) {
+        enable_required_privileges();
+        return SafeModeManager::execute_safe_mode_plan(options.yes, options.target);
     }
 
     if (options.install_menu) {
@@ -366,7 +379,18 @@ int wmain(int argc, wchar_t* argv[]) {
     final_report.target_root = target.root_path;
     final_report.artifacts = scored_artifacts;
 
-    // Phase 1: Terminate target processes
+    // Phase 1: Defuse restart and watchdog mechanisms
+    Logger::info(L"Defusing restart mechanisms, service failure actions, and tasks...");
+    const auto defuse_report = RecoveryDefuser::defuse_all(
+        target, plan.services_to_remove, plan.tasks_to_remove);
+
+    // Phase 2: Freeze target processes to prevent watchdog respawning
+    if (!plan.processes_to_terminate.empty()) {
+        Logger::info(L"Freezing target processes to prevent watchdog respawning...");
+        ProcessManager::suspend_target_processes(target.root_path);
+    }
+
+    // Phase 3: Terminate target processes
     if (!plan.processes_to_terminate.empty()) {
         Logger::info(L"Terminating target processes...");
         const auto report = ProcessManager::terminate_target_processes(
@@ -377,13 +401,13 @@ int wmain(int argc, wchar_t* argv[]) {
         final_report.processes_failed = report.failed;
     }
 
-    // Phase 2: Release file locks
+    // Phase 4: Release file locks
     Logger::info(L"Releasing file locks...");
     const auto unlock_report = FileUnlocker::release_locks(
         target.root_path, !options.no_handle_kill);
     final_report.handles_closed = unlock_report.handles_closed;
 
-    // Phase 3: Remove services, drivers, and scheduled tasks
+    // Phase 5: Remove services, drivers, and scheduled tasks
     if (!plan.services_to_remove.empty() || !plan.tasks_to_remove.empty()) {
         Logger::info(L"Removing services, drivers, and scheduled tasks...");
         const auto svc_report = ServiceManager::remove_services_and_tasks(target.root_path);
@@ -400,7 +424,7 @@ int wmain(int argc, wchar_t* argv[]) {
         }
     }
 
-    // Phase 4: Wipe physical directory tree
+    // Phase 6: Wipe physical directory tree
     Logger::info(L"Deleting physical directory tree...");
     PhysicalWipeReport wipe_report;
     const bool compute_sizes = options.json || !options.yes;
@@ -424,7 +448,7 @@ int wmain(int argc, wchar_t* argv[]) {
         }
     }
 
-    // Phase 5: Clean registry entries
+    // Phase 7: Clean registry entries
     Logger::info(L"Cleaning registry entries...");
     RegistryCleanReport reg_report;
     auto reg_res = RegistryCleaner::clean(target, reg_report, options.no_backup);
@@ -441,7 +465,7 @@ int wmain(int argc, wchar_t* argv[]) {
     final_report.items_backed_up = reg_report.items_backed_up;
     final_report.backup_directory = reg_report.backup_directory;
 
-    // Phase 6: Clean leftovers on disk and firewall rules
+    // Phase 8: Clean leftovers on disk and firewall rules
     Logger::info(L"Cleaning leftovers on disk and firewall rules...");
     const auto left_report = LeftoversCleaner::clean_leftovers(target, options.aggressive, all_installed_apps);
 
@@ -482,6 +506,40 @@ int wmain(int argc, wchar_t* argv[]) {
                 }
             }
         }
+    }
+
+    // Phase 9: Post-reboot resumption setup
+    if (final_report.reboot_required) {
+        ResumeState resume_state;
+        resume_state.target_name = target.name;
+        resume_state.target_root = target.root_path;
+        resume_state.aggressive = options.aggressive;
+        resume_state.pending_files = wipe_report.failed_paths;
+        for (const auto& dir : wipe_report.failed_paths) {
+            std::error_code ec;
+            if (fs::is_directory(dir, ec)) {
+                resume_state.pending_directories.push_back(dir);
+            }
+        }
+        for (const auto& s : plan.services_to_remove) {
+            if (s.is_driver) {
+                resume_state.pending_drivers.push_back(s.name);
+            } else {
+                resume_state.pending_services.push_back(s.name);
+            }
+        }
+
+        auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        wchar_t time_buf[64]{};
+        _wctime_s(time_buf, 64, &now);
+        resume_state.created_at = time_buf;
+        while (!resume_state.created_at.empty() &&
+               (resume_state.created_at.back() == L'\n' || resume_state.created_at.back() == L'\r')) {
+            resume_state.created_at.pop_back();
+        }
+
+        ResumeManager::save_resume_state(resume_state);
+        Logger::info(L"Scheduled post-reboot resumption via RunOnce and %ProgramData%\\obliterator\\resume.json");
     }
 
     final_report.success = wipe_res.has_value() && reg_res.has_value();

@@ -28,6 +28,8 @@ void CommandLineParser::print_usage() {
                << L"  --all-users            Clean traces in all user profiles on this system\n"
                << L"  --user <name-or-sid>   Clean traces in specified user profile\n"
                << L"  --include-system-profiles Include service accounts (SYSTEM, LocalService, NetworkService)\n"
+               << L"  --resume               Resume cleanup after system reboot from saved state\n"
+               << L"  --safe-mode-plan       Display Safe Mode removal plan and boot configuration\n"
                << L"  --install-menu         Add 'Force Obliterate' to folder context menu in HKCU\n"
                << L"  --uninstall-menu       Remove 'Force Obliterate' from folder context menu\n"
                << L"  --help, -h             Display this help message\n";
@@ -95,6 +97,10 @@ Result<CommandLineOptions> CommandLineParser::parse(const std::vector<std::wstri
             }
         } else if (arg == L"--include-system-profiles") {
             options.include_system_profiles = true;
+        } else if (arg == L"--resume") {
+            options.resume = true;
+        } else if (arg == L"--safe-mode-plan") {
+            options.safe_mode_plan = true;
         } else if (arg == L"--install-menu") {
             options.install_menu = true;
         } else if (arg == L"--uninstall-menu") {

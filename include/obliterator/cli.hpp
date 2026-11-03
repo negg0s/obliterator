@@ -30,6 +30,8 @@ struct CommandLineOptions {
     bool all_users{false};
     std::wstring user_filter;
     bool include_system_profiles{false};
+    bool resume{false};
+    bool safe_mode_plan{false};
 };
 
 class CommandLineParser {
