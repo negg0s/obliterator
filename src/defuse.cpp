@@ -40,12 +40,13 @@ bool RecoveryDefuser::defuse_service(SC_HANDLE scm, const std::wstring& service_
         return false;
     }
 
+    SC_ACTION dummy_action{};
     SERVICE_FAILURE_ACTIONSW sfa{};
     sfa.dwResetPeriod = 0;
     sfa.lpRebootMsg = nullptr;
     sfa.lpCommand = nullptr;
     sfa.cActions = 0;
-    sfa.lpsaActions = nullptr;
+    sfa.lpsaActions = &dummy_action;
     ChangeServiceConfig2W(svc.get(), SERVICE_CONFIG_FAILURE_ACTIONS, &sfa);
 
     SERVICE_FAILURE_ACTIONS_FLAG flag{FALSE};
