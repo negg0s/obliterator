@@ -6,6 +6,7 @@
 #include "obliterator/result.hpp"
 #include "obliterator/safety.hpp"
 #include "obliterator/target.hpp"
+#include "obliterator/unlocker.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
@@ -175,6 +176,18 @@ static void test_process_management() {
     check(procs.empty(), "target processes for non-existent path is empty");
 }
 
+static void test_unlocker() {
+    check(FileUnlocker::is_critical_process(0), "pid 0 is critical");
+    check(FileUnlocker::is_critical_process(4), "pid 4 is critical");
+    check(FileUnlocker::is_critical_process(GetCurrentProcessId()), "self pid is critical");
+
+    const auto locks = FileUnlocker::inspect_locks(L"D:\\Projects\\ObliteratorNonExistentLockPath");
+    check(locks.empty(), "inspect locks on non-existent path is empty");
+
+    const auto report = FileUnlocker::release_locks(L"D:\\Projects\\ObliteratorNonExistentLockPath", false);
+    check(report.handles_closed == 0, "handles closed on non-existent path is 0");
+}
+
 static void test_plan_structure() {
     Target target;
     target.name = L"SampleApp";
@@ -188,9 +201,11 @@ static void test_plan_structure() {
 
     Plan plan(target);
     plan.processes_to_terminate.push_back({1234, L"Sample.exe", L"D:\\Apps\\SampleApp\\Sample.exe", L"image path"});
+    plan.locked_files_to_release.push_back({L"D:\\Apps\\SampleApp\\data.db", 5678, L"DataServer.exe"});
 
     check(!plan.is_empty(), "plan is not empty");
     check(plan.processes_to_terminate.size() == 1, "1 process in plan");
+    check(plan.locked_files_to_release.size() == 1, "1 locked file in plan");
     check(plan.directories_to_remove.size() == 1, "1 directory in plan");
     check(plan.directories_to_remove[0] == L"D:\\Apps\\SampleApp", "directory matches target root");
     check(plan.registry_keys_to_remove.size() == 1, "1 registry key in plan");
@@ -209,6 +224,7 @@ int main() {
     test_safety_validation();
     test_install_folder_deduction();
     test_process_management();
+    test_unlocker();
     test_plan_structure();
 
     std::cout << "All tests passed successfully.\n";

@@ -4,6 +4,7 @@
 #include "obliterator/privileges.hpp"
 #include "obliterator/process.hpp"
 #include "obliterator/target.hpp"
+#include "obliterator/unlocker.hpp"
 
 #include <iostream>
 #include <string>
@@ -16,11 +17,12 @@ struct CommandLineOptions {
     bool dry_run{false};
     bool yes{false};
     bool verbose{false};
+    bool no_handle_kill{false};
     uint32_t timeout_seconds{5};
 };
 
 static void print_usage() {
-    std::wcout << L"Usage: obliterator <target-name-or-path> [--dry-run] [--yes] [--verbose] [--timeout <seconds>]\n\n"
+    std::wcout << L"Usage: obliterator <target-name-or-path> [--dry-run] [--yes] [--verbose] [--timeout <sec>] [--no-handle-kill]\n\n"
                << L"Arguments:\n"
                << L"  <target-name-or-path>  Target directory or application name to wipe\n\n"
                << L"Options:\n"
@@ -28,6 +30,7 @@ static void print_usage() {
                << L"  --yes, -y              Skip confirmation prompt\n"
                << L"  --verbose, -v          Enable debug output\n"
                << L"  --timeout <sec>        Process kill wait timeout in seconds (default: 5)\n"
+               << L"  --no-handle-kill       Disable remote file handle duplication and closure\n"
                << L"  --help, -h             Display this help message\n";
 }
 
@@ -43,6 +46,8 @@ static Result<CommandLineOptions> parse_arguments(int argc, wchar_t* argv[]) {
             options.yes = true;
         } else if (arg == L"--verbose" || arg == L"-v") {
             options.verbose = true;
+        } else if (arg == L"--no-handle-kill") {
+            options.no_handle_kill = true;
         } else if (arg == L"--timeout") {
             if (i + 1 < argc) {
                 try {
@@ -124,6 +129,12 @@ int wmain(int argc, wchar_t* argv[]) {
         plan.processes_to_terminate.push_back({proc.pid, proc.name, proc.image_path, reason});
     }
 
+    // Level 1 lock inspection via Restart Manager
+    const auto locked_files = FileUnlocker::inspect_locks(target.root_path);
+    for (const auto& lock : locked_files) {
+        plan.locked_files_to_release.push_back({lock.path, lock.pid, lock.process_name});
+    }
+
     if (options.dry_run) {
         Logger::info(L"Dry-run mode active; displaying plan without making modifications");
         plan.print();
@@ -149,6 +160,13 @@ int wmain(int argc, wchar_t* argv[]) {
             }
         }
     }
+
+    Logger::info(L"Releasing file locks...");
+    const auto unlock_report = FileUnlocker::release_locks(
+        target.root_path, !options.no_handle_kill);
+
+    std::wcout << L"Lock release summary: "
+               << unlock_report.handles_closed << L" handles closed\n";
 
     return 0;
 }

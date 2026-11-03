@@ -14,6 +14,12 @@ struct PlanProcess {
     std::wstring match_reason;
 };
 
+struct PlanLockedFile {
+    std::wstring path;
+    DWORD pid{0};
+    std::wstring process_name;
+};
+
 struct PlanRegistryKey {
     HKEY root_key;
     std::wstring subkey_path;
@@ -24,6 +30,7 @@ struct PlanRegistryKey {
 struct Plan {
     Target target;
     std::vector<PlanProcess> processes_to_terminate;
+    std::vector<PlanLockedFile> locked_files_to_release;
     std::vector<std::wstring> directories_to_remove;
     std::vector<PlanRegistryKey> registry_keys_to_remove;
 

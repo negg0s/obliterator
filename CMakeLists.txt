@@ -18,6 +18,7 @@ add_library(obliterator_core STATIC
     include/obliterator/result.hpp
     include/obliterator/safety.hpp
     include/obliterator/target.hpp
+    include/obliterator/unlocker.hpp
     src/error.cpp
     src/log.cpp
     src/plan.cpp
@@ -25,6 +26,7 @@ add_library(obliterator_core STATIC
     src/process.cpp
     src/safety.cpp
     src/target.cpp
+    src/unlocker.cpp
 )
 
 target_include_directories(obliterator_core PUBLIC
@@ -34,6 +36,7 @@ target_include_directories(obliterator_core PUBLIC
 target_link_libraries(obliterator_core PUBLIC
     advapi32
     ntdll
+    rstrtmgr
 )
 
 if(MSVC)

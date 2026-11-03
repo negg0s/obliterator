@@ -35,6 +35,7 @@ Plan::Plan(Target t) : target(std::move(t)) {
 
 bool Plan::is_empty() const noexcept {
     return processes_to_terminate.empty() &&
+           locked_files_to_release.empty() &&
            directories_to_remove.empty() &&
            registry_keys_to_remove.empty();
 }
@@ -54,6 +55,18 @@ void Plan::print() const {
             if (!proc.image_path.empty()) {
                 std::wcout << L"        " << proc.image_path << L"\n";
             }
+        }
+        std::wcout << L"\n";
+    }
+
+    if (!locked_files_to_release.empty()) {
+        std::wcout << L"Locked files to release (" << locked_files_to_release.size() << L"):\n";
+        for (const auto& item : locked_files_to_release) {
+            std::wcout << L"  [PID " << item.pid << L"] " << item.process_name;
+            if (!item.path.empty()) {
+                std::wcout << L" -> " << item.path;
+            }
+            std::wcout << L"\n";
         }
         std::wcout << L"\n";
     }
