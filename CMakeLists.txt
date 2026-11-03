@@ -9,9 +9,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_compile_definitions(UNICODE _UNICODE)
 
 add_library(obliterator_core STATIC
+    include/obliterator/cli.hpp
     include/obliterator/error.hpp
     include/obliterator/handles.hpp
     include/obliterator/log.hpp
+    include/obliterator/path.hpp
     include/obliterator/plan.hpp
     include/obliterator/privileges.hpp
     include/obliterator/process.hpp
@@ -25,9 +27,11 @@ add_library(obliterator_core STATIC
     include/obliterator/ui.hpp
     include/obliterator/unlocker.hpp
     include/obliterator/wiper.hpp
+    src/cli.cpp
     src/error.cpp
     src/leftovers.cpp
     src/log.cpp
+    src/path.cpp
     src/plan.cpp
     src/privileges.cpp
     src/process.cpp
@@ -61,6 +65,7 @@ if(MSVC)
         /WX
         /permissive-
         /utf-8
+        /EHsc
     )
 endif()
 
@@ -79,6 +84,7 @@ if(MSVC)
         /WX
         /permissive-
         /utf-8
+        /EHsc
     )
 
     set_target_properties(obliterator PROPERTIES
@@ -98,6 +104,7 @@ if(MSVC)
         /WX
         /permissive-
         /utf-8
+        /EHsc
     )
 endif()
 
@@ -117,7 +124,29 @@ if(MSVC)
         /WX
         /permissive-
         /utf-8
+        /EHsc
     )
 endif()
 
 add_test(NAME unit_tests COMMAND obliterator_tests)
+
+option(ENABLE_FUZZING "Build libFuzzer targets" OFF)
+if(ENABLE_FUZZING AND MSVC)
+    target_compile_options(obliterator_core PRIVATE /fsanitize=fuzzer)
+
+    add_executable(fuzz_service_image_path tests/fuzz/fuzz_service_image_path.cpp)
+    target_link_libraries(fuzz_service_image_path PRIVATE obliterator_core)
+    target_compile_options(fuzz_service_image_path PRIVATE /fsanitize=fuzzer /EHsc /W4 /WX /utf-8)
+
+    add_executable(fuzz_uninstall_string tests/fuzz/fuzz_uninstall_string.cpp)
+    target_link_libraries(fuzz_uninstall_string PRIVATE obliterator_core)
+    target_compile_options(fuzz_uninstall_string PRIVATE /fsanitize=fuzzer /EHsc /W4 /WX /utf-8)
+
+    add_executable(fuzz_registry_paths tests/fuzz/fuzz_registry_paths.cpp)
+    target_link_libraries(fuzz_registry_paths PRIVATE obliterator_core)
+    target_compile_options(fuzz_registry_paths PRIVATE /fsanitize=fuzzer /EHsc /W4 /WX /utf-8)
+
+    add_executable(fuzz_cli_args tests/fuzz/fuzz_cli_args.cpp)
+    target_link_libraries(fuzz_cli_args PRIVATE obliterator_core)
+    target_compile_options(fuzz_cli_args PRIVATE /fsanitize=fuzzer /EHsc /W4 /WX /utf-8)
+endif()
