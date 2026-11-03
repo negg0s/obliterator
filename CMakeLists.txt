@@ -31,6 +31,7 @@ add_library(obliterator_core STATIC
     include/obliterator/unlocker.hpp
     include/obliterator/uwp.hpp
     include/obliterator/portable.hpp
+    include/obliterator/profile.hpp
     include/obliterator/wiper.hpp
     src/cli.cpp
     src/confidence_engine.cpp
@@ -42,6 +43,7 @@ add_library(obliterator_core STATIC
     src/portable.cpp
     src/privileges.cpp
     src/process.cpp
+    src/profile.cpp
     src/registry_cleaner.cpp
     src/report.cpp
     src/safety.cpp

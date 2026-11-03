@@ -303,4 +303,55 @@ private:
     T* m_ptr;
 };
 
+class Wow64FsRedirectionGuard {
+public:
+    Wow64FsRedirectionGuard() noexcept {
+        PVOID old_val = nullptr;
+        if (Wow64DisableWow64FsRedirection(&old_val)) {
+            m_disabled = true;
+            m_old_value = old_val;
+        }
+    }
+
+    ~Wow64FsRedirectionGuard() noexcept {
+        revert();
+    }
+
+    Wow64FsRedirectionGuard(const Wow64FsRedirectionGuard&) = delete;
+    Wow64FsRedirectionGuard& operator=(const Wow64FsRedirectionGuard&) = delete;
+
+    Wow64FsRedirectionGuard(Wow64FsRedirectionGuard&& other) noexcept
+        : m_disabled(other.m_disabled), m_old_value(other.m_old_value) {
+        other.m_disabled = false;
+        other.m_old_value = nullptr;
+    }
+
+    Wow64FsRedirectionGuard& operator=(Wow64FsRedirectionGuard&& other) noexcept {
+        if (this != &other) {
+            revert();
+            m_disabled = other.m_disabled;
+            m_old_value = other.m_old_value;
+            other.m_disabled = false;
+            other.m_old_value = nullptr;
+        }
+        return *this;
+    }
+
+    void revert() noexcept {
+        if (m_disabled) {
+            Wow64RevertWow64FsRedirection(m_old_value);
+            m_disabled = false;
+            m_old_value = nullptr;
+        }
+    }
+
+    [[nodiscard]] bool is_disabled() const noexcept {
+        return m_disabled;
+    }
+
+private:
+    bool m_disabled{false};
+    PVOID m_old_value{nullptr};
+};
+
 } // namespace obliterator

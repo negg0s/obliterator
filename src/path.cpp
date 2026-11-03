@@ -61,6 +61,12 @@ std::wstring PathHelper::normalize(std::wstring_view path) {
         full[0] = static_cast<wchar_t>(full[0] - L'a' + L'A');
     }
 
+    std::wstring lower_full = to_lower_unicode(full);
+    size_t sysnative_pos = lower_full.find(L"\\windows\\sysnative");
+    if (sysnative_pos != std::wstring::npos) {
+        full.replace(sysnative_pos + 9, 9, L"System32");
+    }
+
     while (full.size() > 3 && full.back() == L'\\') {
         full.pop_back();
     }
