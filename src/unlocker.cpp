@@ -214,6 +214,45 @@ UnlockReport FileUnlocker::release_locks(const std::wstring& target_root_path,
     const std::wstring lower_target = to_lower_string(norm_target);
     const std::wstring target_prefix = lower_target + L"\\";
 
+    // Only scan system handles if files in target directory are still locked
+    bool has_locked_files = false;
+    std::error_code ec;
+    if (std::filesystem::exists(norm_target, ec)) {
+        if (std::filesystem::is_directory(norm_target, ec)) {
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(
+                     norm_target, std::filesystem::directory_options::skip_permission_denied, ec)) {
+                if (entry.is_regular_file(ec)) {
+                    HANDLE h = CreateFileW(entry.path().c_str(), GENERIC_READ, 0, nullptr,
+                                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+                    if (h == INVALID_HANDLE_VALUE) {
+                        const DWORD err = GetLastError();
+                        if (err == ERROR_SHARING_VIOLATION || err == ERROR_LOCK_VIOLATION) {
+                            has_locked_files = true;
+                            break;
+                        }
+                    } else {
+                        CloseHandle(h);
+                    }
+                }
+            }
+        } else {
+            HANDLE h = CreateFileW(norm_target.c_str(), GENERIC_READ, 0, nullptr,
+                                   OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h == INVALID_HANDLE_VALUE) {
+                const DWORD err = GetLastError();
+                if (err == ERROR_SHARING_VIOLATION || err == ERROR_LOCK_VIOLATION) {
+                    has_locked_files = true;
+                }
+            } else {
+                CloseHandle(h);
+            }
+        }
+    }
+
+    if (!has_locked_files) {
+        return report;
+    }
+
     ULONG buffer_size = 1024 * 1024 * 4;
     std::vector<BYTE> buffer;
     NTSTATUS status = 0;

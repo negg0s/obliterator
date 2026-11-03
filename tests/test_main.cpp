@@ -470,29 +470,170 @@ static void test_final_report_json() {
     check(json_str.find(L"\"exit_code\": 0") != std::wstring::npos, "json contains exit_code");
 }
 
+static void test_path_normalization() {
+    const std::wstring norm1 = SafetyValidator::normalize_path(L"c:/windows/system32/");
+    check(norm1 == L"C:\\Windows\\System32" || norm1 == L"C:\\windows\\system32", "normalize forward slashes");
+
+    const std::wstring norm2 = SafetyValidator::normalize_path(L"D:\\Projects\\obliterator\\build\\..\\src");
+    check(norm2.find(L"..") == std::wstring::npos, "normalize removes dotdot");
+
+    check(SafetyValidator::is_drive_root(L"C:\\"), "C:\\ is drive root");
+    check(SafetyValidator::is_drive_root(L"c:"), "c: is drive root");
+    check(!SafetyValidator::is_drive_root(L"C:\\Windows"), "C:\\Windows not drive root");
+}
+
+static void test_target_name_resolution_mock() {
+    namespace fs = std::filesystem;
+    const fs::path mock_dir = L"D:\\Projects\\obliterator\\build\\mock_test_install";
+    fs::create_directories(mock_dir);
+
+    const std::wstring subkey_path = L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MockObliteratorApp";
+    UniqueHKey key;
+    LSTATUS st = RegCreateKeyExW(HKEY_CURRENT_USER, subkey_path.c_str(), 0, nullptr,
+                                 0, KEY_WRITE, nullptr, key.put(), nullptr);
+    check(st == ERROR_SUCCESS, "create mock uninstall key in HKCU");
+
+    const std::wstring name = L"Mock Obliterator App";
+    const std::wstring loc = mock_dir.wstring();
+    const std::wstring uninst = L"\"" + loc + L"\\uninstall.exe\" /S";
+
+    RegSetValueExW(key.get(), L"DisplayName", 0, REG_SZ,
+                   reinterpret_cast<const BYTE*>(name.c_str()),
+                   static_cast<DWORD>((name.size() + 1) * sizeof(wchar_t)));
+    RegSetValueExW(key.get(), L"InstallLocation", 0, REG_SZ,
+                   reinterpret_cast<const BYTE*>(loc.c_str()),
+                   static_cast<DWORD>((loc.size() + 1) * sizeof(wchar_t)));
+    RegSetValueExW(key.get(), L"UninstallString", 0, REG_SZ,
+                   reinterpret_cast<const BYTE*>(uninst.c_str()),
+                   static_cast<DWORD>((uninst.size() + 1) * sizeof(wchar_t)));
+
+    key.reset();
+
+    auto target_res = TargetResolver::resolve(L"Mock Obliterator");
+    check(target_res.has_value(), "resolve mock target by name");
+    check(target_res->name == name, "target name matches mock display name");
+    check(target_res->root_path == loc, "target root path matches mock install location");
+
+    RegistryCleaner::delete_key_tree(HKEY_CURRENT_USER, subkey_path);
+    fs::remove_all(mock_dir);
+}
+
+static void test_integration_blocker_and_wipe() {
+    namespace fs = std::filesystem;
+    const fs::path sandbox = L"D:\\Projects\\obliterator\\build\\test_integration_sandbox";
+    const fs::path target_dir = sandbox / L"StubbornApp";
+    fs::create_directories(target_dir);
+
+    wchar_t test_exe_path[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, test_exe_path, MAX_PATH);
+    fs::path bin_dir = fs::path(test_exe_path).parent_path();
+    fs::path blocker_src = bin_dir / L"test_blocker.exe";
+    check(fs::exists(blocker_src), "test_blocker.exe binary found in build output");
+
+    fs::path blocker_dst = target_dir / L"blocker.exe";
+    fs::copy_file(blocker_src, blocker_dst, fs::copy_options::overwrite_existing);
+
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    std::wstring cmd = L"\"" + blocker_dst.wstring() + L"\"";
+
+    BOOL started = CreateProcessW(
+        nullptr,
+        cmd.data(),
+        nullptr,
+        nullptr,
+        FALSE,
+        0,
+        nullptr,
+        target_dir.wstring().c_str(),
+        &si,
+        &pi
+    );
+    check(started, "launched blocker.exe process");
+
+    const DWORD parent_pid = pi.dwProcessId;
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    Sleep(500);
+
+    const auto procs_before = ProcessManager::find_target_processes(target_dir.wstring());
+    check(procs_before.size() >= 2, "found blocker parent and watchdog child processes");
+
+    const fs::path locked_file = target_dir / L"locked_file.bin";
+    check(fs::exists(locked_file), "locked_file.bin created on disk");
+
+    HANDLE hTry = CreateFileW(locked_file.c_str(), GENERIC_READ | GENERIC_WRITE,
+                              0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    check(hTry == INVALID_HANDLE_VALUE, "file is actively locked by blocker process");
+
+    auto term_report = ProcessManager::terminate_target_processes(target_dir.wstring(), 5);
+    check(term_report.killed >= 2, "terminated at least 2 target processes");
+
+    auto unlock_report = FileUnlocker::release_locks(target_dir.wstring(), true);
+    (void)unlock_report;
+
+    PhysicalWipeReport wipe_rep;
+    auto wipe_res = FileWiper::wipe_physical_tree(target_dir.wstring(), wipe_rep);
+    check(wipe_res.has_value(), "wipe_physical_tree succeeds on stubborn directory");
+    check(!fs::exists(target_dir), "stubborn directory completely removed from disk");
+    check(wipe_rep.files_deleted >= 2, "files deleted counted correctly");
+
+    UniqueHandle hParent(OpenProcess(SYNCHRONIZE, FALSE, parent_pid));
+    check(!hParent || WaitForSingleObject(hParent.get(), 0) == WAIT_OBJECT_0, "parent process dead");
+
+    fs::remove_all(sandbox);
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
+    std::wcout << L"[RUN] test_unique_handle\n" << std::flush;
     test_unique_handle();
+    std::wcout << L"[RUN] test_unique_hkey\n" << std::flush;
     test_unique_hkey();
+    std::wcout << L"[RUN] test_unique_sc_handle\n" << std::flush;
     test_unique_sc_handle();
+    std::wcout << L"[RUN] test_win32_error_and_result\n" << std::flush;
     test_win32_error_and_result();
+    std::wcout << L"[RUN] test_safety_validation\n" << std::flush;
     test_safety_validation();
+    std::wcout << L"[RUN] test_install_folder_deduction\n" << std::flush;
     test_install_folder_deduction();
+    std::wcout << L"[RUN] test_process_management\n" << std::flush;
     test_process_management();
+    std::wcout << L"[RUN] test_unlocker\n" << std::flush;
     test_unlocker();
+    std::wcout << L"[RUN] test_service_manager\n" << std::flush;
     test_service_manager();
+    std::wcout << L"[RUN] test_extended_path_formatting\n" << std::flush;
     test_extended_path_formatting();
+    std::wcout << L"[RUN] test_reparse_point_and_acl\n" << std::flush;
     test_reparse_point_and_acl();
+    std::wcout << L"[RUN] test_format_bytes\n" << std::flush;
     test_format_bytes();
+    std::wcout << L"[RUN] test_physical_wipe_tree\n" << std::flush;
     test_physical_wipe_tree();
+    std::wcout << L"[RUN] test_plan_structure\n" << std::flush;
     test_plan_structure();
+    std::wcout << L"[RUN] test_registry_backup\n" << std::flush;
     test_registry_backup();
+    std::wcout << L"[RUN] test_registry_cleaner_autorun\n" << std::flush;
     test_registry_cleaner_autorun();
+    std::wcout << L"[RUN] test_context_menu_installation\n" << std::flush;
     test_context_menu_installation();
+    std::wcout << L"[RUN] test_installed_apps_enumeration\n" << std::flush;
     test_installed_apps_enumeration();
+    std::wcout << L"[RUN] test_final_report_json\n" << std::flush;
     test_final_report_json();
+    std::wcout << L"[RUN] test_path_normalization\n" << std::flush;
+    test_path_normalization();
+    std::wcout << L"[RUN] test_target_name_resolution_mock\n" << std::flush;
+    test_target_name_resolution_mock();
+    std::wcout << L"[RUN] test_integration_blocker_and_wipe\n" << std::flush;
+    test_integration_blocker_and_wipe();
 
-    std::cout << "All tests passed successfully.\n";
+    std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;
 }

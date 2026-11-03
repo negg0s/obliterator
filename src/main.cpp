@@ -13,6 +13,8 @@
 #include "obliterator/unlocker.hpp"
 #include "obliterator/wiper.hpp"
 
+#include <fcntl.h>
+#include <io.h>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -110,6 +112,9 @@ static Result<CommandLineOptions> parse_arguments(int argc, wchar_t* argv[]) {
 } // namespace obliterator
 
 int wmain(int argc, wchar_t* argv[]) {
+    _setmode(_fileno(stdout), _O_U8TEXT);
+    _setmode(_fileno(stderr), _O_U8TEXT);
+
     using namespace obliterator;
 
     auto parse_res = parse_arguments(argc, argv);

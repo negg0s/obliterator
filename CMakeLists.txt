@@ -88,9 +88,24 @@ endif()
 
 enable_testing()
 
+add_executable(test_blocker
+    tests/blocker.cpp
+)
+
+if(MSVC)
+    target_compile_options(test_blocker PRIVATE
+        /W4
+        /WX
+        /permissive-
+        /utf-8
+    )
+endif()
+
 add_executable(obliterator_tests
     tests/test_main.cpp
 )
+
+add_dependencies(obliterator_tests test_blocker)
 
 target_link_libraries(obliterator_tests PRIVATE
     obliterator_core
