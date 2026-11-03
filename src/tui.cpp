@@ -794,7 +794,6 @@ int TuiRunner::run(CommandLineOptions options) {
         DWORD written = 0;
         WriteConsoleW(hOut, frame.data(), static_cast<DWORD>(frame.size()), &written, nullptr);
 
-        // Check if selected app changed in list screen
         if (model.get_current_screen() == TuiScreen::List &&
             model.get_selected_index() != last_selected_idx) {
             last_selected_idx = model.get_selected_index();

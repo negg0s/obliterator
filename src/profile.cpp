@@ -243,7 +243,6 @@ std::vector<UserProfileInfo> ProfileManager::enumerate_profiles(
         info.ntuser_dat_path = profile_path + L"\\NTUSER.DAT";
         info.usrclass_dat_path = profile_path + L"\\AppData\\Local\\Microsoft\\Windows\\UsrClass.dat";
 
-        // Check if currently loaded in HKEY_USERS
         UniqueHKey hLoaded;
         if (RegOpenKeyExW(HKEY_USERS, sid.c_str(), 0, KEY_READ, hLoaded.put()) == ERROR_SUCCESS) {
             info.is_loaded = true;
