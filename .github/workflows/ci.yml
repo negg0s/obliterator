@@ -9,7 +9,18 @@ on:
 
 jobs:
   build:
+    name: Build (${{ matrix.arch }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            cmake_arch: x64
+            run_tests: true
+          - arch: arm64
+            cmake_arch: ARM64
+            run_tests: false
 
     steps:
       - name: Checkout code
@@ -17,26 +28,143 @@ jobs:
 
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Verify build reproducibility (x64)
+        if: matrix.arch == 'x64'
+        shell: powershell
+        run: |
+          cmake -B build_repro1 -DCMAKE_BUILD_TYPE=Release -A x64
+          cmake --build build_repro1 --config Release --target obliterator
+          cmake -B build_repro2 -DCMAKE_BUILD_TYPE=Release -A x64
+          cmake --build build_repro2 --config Release --target obliterator
+          $hash1 = (Get-FileHash build_repro1/Release/obliterator.exe).Hash
+          $hash2 = (Get-FileHash build_repro2/Release/obliterator.exe).Hash
+          Write-Host "Build 1 Hash: $hash1"
+          Write-Host "Build 2 Hash: $hash2"
+          if ($hash1 -ne $hash2) {
+            Write-Error "Reproducibility check failed: hashes do not match"
+            exit 1
+          }
+          Write-Host "Reproducibility check passed: identical hashes"
+          Remove-Item -Recurse -Force build_repro1, build_repro2
 
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=${{ github.workspace }}/bin -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=${{ github.workspace }}/bin
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -A ${{ matrix.cmake_arch }}
 
       - name: Build
         run: cmake --build build --config Release
 
       - name: Run Tests
+        if: matrix.run_tests
         run: ctest --test-dir build -C Release --output-on-failure
 
-      - name: Upload Artifact
+      - name: Sign executable (optional)
+        if: env.SIGNING_CERT_BASE64 != ''
+        env:
+          SIGNING_CERT_BASE64: ${{ secrets.SIGNING_CERT_BASE64 }}
+          SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+        shell: powershell
+        run: |
+          $certBytes = [Convert]::FromBase64String($env:SIGNING_CERT_BASE64)
+          $certPath = "$env:TEMP\signing_cert.pfx"
+          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+          try {
+            & signtool.exe sign /f $certPath /p $env:SIGNING_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 build/Release/obliterator.exe
+            & signtool.exe verify /pa /v build/Release/obliterator.exe
+          } finally {
+            if (Test-Path $certPath) {
+              Remove-Item -Force $certPath
+            }
+          }
+
+      - name: Create release zip
+        shell: powershell
+        run: |
+          $staging = "obliterator-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Path $staging
+          Copy-Item "build/Release/obliterator.exe" -Destination "$staging/obliterator.exe"
+          Copy-Item "README.md", "LICENSE", "CHANGELOG.md" -Destination $staging
+          Compress-Archive -Path "$staging/*" -DestinationPath "obliterator-${{ matrix.arch }}.zip"
+
+      - name: Upload zip artifact
         uses: actions/upload-artifact@v4
         with:
-          name: obliterator-windows-x64
-          path: bin/obliterator.exe
+          name: obliterator-${{ matrix.arch }}
+          path: obliterator-${{ matrix.arch }}.zip
 
-      - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/v')
+  release:
+    name: Create Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Organize release files
+        shell: powershell
+        run: |
+          Move-Item "artifacts/obliterator-x64/obliterator-x64.zip" .
+          Move-Item "artifacts/obliterator-arm64/obliterator-arm64.zip" .
+
+      - name: Generate CycloneDX SBOM
+        run: python scripts/generate_sbom.py --version ${{ github.ref_name }} --output sbom.cdx.json
+
+      - name: Generate SHA256SUMS
+        shell: powershell
+        run: |
+          $files = "obliterator-x64.zip", "obliterator-arm64.zip", "sbom.cdx.json"
+          Get-FileHash -Algorithm SHA256 $files | ForEach-Object {
+            "$($_.Hash.ToLower())  $([System.IO.Path]::GetFileName($_.Path))"
+          } | Set-Content SHA256SUMS -Encoding utf8
+          Get-Content SHA256SUMS
+
+      - name: Extract Changelog notes
+        shell: powershell
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          $lines = Get-Content CHANGELOG.md
+          $capturing = $false
+          $notes = @()
+          foreach ($line in $lines) {
+            if ($line -match "^## \[$tag\]") {
+              $capturing = $true
+              continue
+            }
+            if ($capturing -and $line -match "^## \[") {
+              break
+            }
+            if ($capturing) {
+              $notes += $line
+            }
+          }
+          $notesText = ($notes -join "`n").Trim()
+          if (-not $notesText) {
+            $notesText = "Release $tag"
+          }
+          Set-Content -Path release_notes.md -Value $notesText -Encoding utf8
+          Get-Content release_notes.md
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: bin/obliterator.exe
+          body_path: release_notes.md
+          files: |
+            obliterator-x64.zip
+            obliterator-arm64.zip
+            SHA256SUMS
+            sbom.cdx.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
