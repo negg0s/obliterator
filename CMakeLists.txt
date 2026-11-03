@@ -15,6 +15,12 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 add_compile_definitions(UNICODE _UNICODE)
 
 if(MSVC)
+    if(CMAKE_GENERATOR_PLATFORM MATCHES "(?i)arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "(?i)arm64" OR CMAKE_VS_PLATFORM_NAME MATCHES "(?i)arm64")
+        set(IS_ARM64_TARGET TRUE)
+    else()
+        set(IS_ARM64_TARGET FALSE)
+    endif()
+
     add_compile_options(
         /W4
         /WX
@@ -30,9 +36,12 @@ if(MSVC)
         /GUARD:CF
         /DYNAMICBASE
         /HIGHENTROPYVA
-        $<$<NOT:$<STREQUAL:${CMAKE_SYSTEM_PROCESSOR},ARM64>>:/CETCOMPAT>
         /Brepro
     )
+
+    if(NOT IS_ARM64_TARGET)
+        add_link_options(/CETCOMPAT)
+    endif()
 endif()
 
 add_library(obliterator_core STATIC
