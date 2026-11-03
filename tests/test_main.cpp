@@ -1530,7 +1530,7 @@ static void test_tui_text_width_and_truncation() {
     check(display_width(L"Привет") == 6, "cyrillic display width");
     check(display_width(L"日本語") == 6, "cjk display width");
     check(display_width(L"ＡＢＣ") == 6, "fullwidth display width");
-    check(display_width(L"🚀") == 2, "emoji display width");
+    check(display_width(L"𠀀") == 2, "astral wide display width");
 
     check(truncate_to_width(L"Hello World", 8, L"...") == L"Hello...", "truncate ascii");
     check(truncate_to_width(L"日本語テスト", 7, L"...") == L"日本...", "truncate cjk");
