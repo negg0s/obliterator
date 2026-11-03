@@ -1,3 +1,4 @@
+#include "obliterator/cli.hpp"
 #include "obliterator/error.hpp"
 #include "obliterator/leftovers.hpp"
 #include "obliterator/log.hpp"
@@ -17,99 +18,6 @@
 #include <io.h>
 #include <iostream>
 #include <string>
-#include <string_view>
-
-namespace obliterator {
-
-struct CommandLineOptions {
-    std::wstring target;
-    bool dry_run{false};
-    bool yes{false};
-    bool verbose{false};
-    bool no_handle_kill{false};
-    bool no_backup{false};
-    bool aggressive{false};
-    bool json{false};
-    bool install_menu{false};
-    bool uninstall_menu{false};
-    uint32_t timeout_seconds{5};
-};
-
-static void print_usage() {
-    std::wcout << L"Usage: obliterator [target-name-or-path] [options]\n\n"
-               << L"Arguments:\n"
-               << L"  [target-name-or-path]  Target directory or application name to wipe.\n"
-               << L"                         If omitted, launches interactive program selector.\n\n"
-               << L"Options:\n"
-               << L"  --dry-run              Inspect and plan without modifying the system\n"
-               << L"  --yes, -y              Skip confirmation prompt\n"
-               << L"  --aggressive           Delete possible leftovers matching heuristic\n"
-               << L"  --no-backup            Disable registry export to .reg before deletion\n"
-               << L"  --no-handle-kill       Disable remote file handle duplication and closure\n"
-               << L"  --timeout <sec>        Process kill wait timeout in seconds (default: 5)\n"
-               << L"  --verbose, -v          Enable debug output\n"
-               << L"  --json                 Output final report in JSON format\n"
-               << L"  --install-menu         Add 'Force Obliterate' to folder context menu in HKCU\n"
-               << L"  --uninstall-menu       Remove 'Force Obliterate' from folder context menu\n"
-               << L"  --help, -h             Display this help message\n";
-}
-
-static Result<CommandLineOptions> parse_arguments(int argc, wchar_t* argv[]) {
-    CommandLineOptions options;
-
-    for (int i = 1; i < argc; ++i) {
-        std::wstring_view arg = argv[i];
-
-        if (arg == L"--dry-run") {
-            options.dry_run = true;
-        } else if (arg == L"--yes" || arg == L"-y") {
-            options.yes = true;
-        } else if (arg == L"--verbose" || arg == L"-v") {
-            options.verbose = true;
-        } else if (arg == L"--no-handle-kill") {
-            options.no_handle_kill = true;
-        } else if (arg == L"--no-backup") {
-            options.no_backup = true;
-        } else if (arg == L"--aggressive") {
-            options.aggressive = true;
-        } else if (arg == L"--json") {
-            options.json = true;
-        } else if (arg == L"--install-menu") {
-            options.install_menu = true;
-        } else if (arg == L"--uninstall-menu") {
-            options.uninstall_menu = true;
-        } else if (arg == L"--timeout") {
-            if (i + 1 < argc) {
-                try {
-                    options.timeout_seconds = static_cast<uint32_t>(std::stoul(argv[++i]));
-                } catch (...) {
-                    Logger::error(L"Invalid timeout value provided");
-                    return Win32Error::from_code(ERROR_INVALID_PARAMETER);
-                }
-            } else {
-                Logger::error(L"Missing argument for --timeout");
-                return Win32Error::from_code(ERROR_INVALID_PARAMETER);
-            }
-        } else if (arg == L"--help" || arg == L"-h") {
-            print_usage();
-            ExitProcess(ExitCode::Success);
-        } else if (arg.starts_with(L"-")) {
-            Logger::error(std::wstring(L"Unknown option: ") + std::wstring(arg));
-            return Win32Error::from_code(ERROR_INVALID_PARAMETER);
-        } else {
-            if (options.target.empty()) {
-                options.target = arg;
-            } else {
-                Logger::error(L"Multiple targets specified; provide at most one target.");
-                return Win32Error::from_code(ERROR_INVALID_PARAMETER);
-            }
-        }
-    }
-
-    return options;
-}
-
-} // namespace obliterator
 
 int wmain(int argc, wchar_t* argv[]) {
     _setmode(_fileno(stdout), _O_U8TEXT);
@@ -117,12 +25,16 @@ int wmain(int argc, wchar_t* argv[]) {
 
     using namespace obliterator;
 
-    auto parse_res = parse_arguments(argc, argv);
+    auto parse_res = CommandLineParser::parse(argc, argv);
     if (!parse_res) {
         return ExitCode::Error;
     }
 
     auto options = parse_res.value();
+    if (options.help_requested) {
+        CommandLineParser::print_usage();
+        return ExitCode::Success;
+    }
     Logger::set_verbose(options.verbose);
     if (options.json) {
         Logger::set_json_mode(true);
