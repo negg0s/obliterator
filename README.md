@@ -89,19 +89,31 @@ obliterator решает другую задачу:
 ## Сборка из исходников
 
 Требования:
-- Windows 10/11 x64
-- Visual Studio 2022/2026 (компилятор MSVC с поддержкой C++20)
+- Windows 10/11 x64 или ARM64
+- Visual Studio 2022/2026 (MSVC с поддержкой C++20)
 - CMake 3.20+
-- Ninja
 
-Команды сборки:
+Сборка одной командой:
+```cmd
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release
+```
+
+Или через CMake Presets:
 ```cmd
 cmake --preset release
 cmake --build --preset release
 ctest --preset release --output-on-failure
 ```
 
-Исполняемый файл будет собран в `build\release\obliterator.exe`.
+Исполняемый файл будет собран в `build\release\obliterator.exe` (или `build\obliterator.exe`).
+
+## Документация
+
+- [Подпись исполняемых файлов (Code Signing)](docs/signing.md)
+- [Публикация в WinGet и Scoop](docs/publishing.md)
+- [Воспроизводимость сборки (Reproducible Builds)](docs/reproducibility.md)
+- [Замеры производительности](docs/perf.md)
+- [История изменений (Changelog)](CHANGELOG.md)
 
 ## Лицензия
 
