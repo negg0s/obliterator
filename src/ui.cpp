@@ -119,12 +119,23 @@ std::vector<InstalledAppInfo> UserInterface::enumerate_installed_apps() {
                 continue;
             }
 
+            const std::wstring publisher = query_ui_reg_string(app_key.get(), L"Publisher");
             const std::wstring install_loc = query_ui_reg_string(app_key.get(), L"InstallLocation");
             const std::wstring display_icon = query_ui_reg_string(app_key.get(), L"DisplayIcon");
             const std::wstring uninstall_str = query_ui_reg_string(app_key.get(), L"UninstallString");
+            const DWORD is_win_installer = query_ui_reg_dword(app_key.get(), L"WindowsInstaller");
 
             const std::wstring deduced_root =
                 TargetResolver::deduce_install_folder(install_loc, display_icon, uninstall_str);
+
+            AppType app_type = AppType::Win32;
+            std::wstring uninstall_lower = uninstall_str;
+            std::transform(uninstall_lower.begin(), uninstall_lower.end(), uninstall_lower.begin(), ::towlower);
+            if (is_win_installer == 1 || uninstall_lower.find(L"msiexec") != std::wstring::npos) {
+                app_type = AppType::Msi;
+            } else if (uninstall_str.empty() && !deduced_root.empty()) {
+                app_type = AppType::Portable;
+            }
 
             const DWORD est_size_kb = query_ui_reg_dword(app_key.get(), L"EstimatedSize");
             uint64_t size_bytes = static_cast<uint64_t>(est_size_kb) * 1024ULL;
@@ -153,6 +164,9 @@ std::vector<InstalledAppInfo> UserInterface::enumerate_installed_apps() {
                     if (existing.root_path.empty() && !deduced_root.empty()) {
                         existing.root_path = deduced_root;
                     }
+                    if (existing.publisher.empty() && !publisher.empty()) {
+                        existing.publisher = publisher;
+                    }
                     duplicate = true;
                     break;
                 }
@@ -167,10 +181,16 @@ std::vector<InstalledAppInfo> UserInterface::enumerate_installed_apps() {
             if (!duplicate) {
                 apps.push_back({
                     display_name,
+                    publisher,
                     install_loc,
                     install_date,
                     size_bytes,
-                    deduced_root
+                    deduced_root,
+                    app_type,
+                    uninstall_str,
+                    false,
+                    L"",
+                    L""
                 });
             }
         }
@@ -180,10 +200,13 @@ std::vector<InstalledAppInfo> UserInterface::enumerate_installed_apps() {
     for (const auto& uwp : uwp_apps) {
         apps.push_back({
             L"[UWP] " + uwp.display_name,
+            L"Microsoft Store",
             uwp.install_location,
             uwp.install_date,
             uwp.size_bytes,
             uwp.install_location,
+            AppType::Store,
+            L"",
             true,
             uwp.full_name,
             uwp.family_name

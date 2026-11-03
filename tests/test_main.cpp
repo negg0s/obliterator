@@ -28,6 +28,8 @@
 #include "obliterator/unlocker.hpp"
 #include "obliterator/uwp.hpp"
 #include "obliterator/wiper.hpp"
+#include "obliterator/tui.hpp"
+#include "obliterator/tui_model.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
@@ -1522,6 +1524,169 @@ static void test_quarantine_and_restore_cycle() {
     FileWiper::wipe_physical_tree(test_dir.wstring(), wipe_rep);
 }
 
+static void test_tui_text_width_and_truncation() {
+    check(display_width(L"hello") == 5, "ascii display width");
+    check(display_width(L"Привет") == 6, "cyrillic display width");
+    check(display_width(L"日本語") == 6, "cjk display width");
+    check(display_width(L"ＡＢＣ") == 6, "fullwidth display width");
+    check(display_width(L"🚀") == 2, "emoji display width");
+
+    check(truncate_to_width(L"Hello World", 8, L"...") == L"Hello...", "truncate ascii");
+    check(truncate_to_width(L"日本語テスト", 7, L"...") == L"日本...", "truncate cjk");
+    check(pad_to_width(L"Test", 8) == L"Test    ", "pad ascii");
+    check(pad_to_width(L"日本語", 8) == L"日本語  ", "pad cjk");
+}
+
+static void test_tui_model_navigation_and_sorting() {
+    TuiModel model;
+    std::vector<TuiAppItem> apps = {
+        {L"Alpha App", L"Vendor A", L"2026-01-01", 1000, L"C:\\Alpha", AppType::Win32, L"", L""},
+        {L"Beta App", L"Vendor B", L"2026-03-01", 5000, L"C:\\Beta", AppType::Msi, L"", L""},
+        {L"Gamma App", L"Vendor C", L"2026-02-01", 2000, L"C:\\Gamma", AppType::Store, L"", L""}
+    };
+    model.set_apps(apps);
+
+    // Default sort: Size descending
+    check(model.get_filtered_count() == 3, "apps count");
+    check(model.get_selected_app() != nullptr, "selected app not null");
+    check(model.get_selected_app()->name == L"Beta App", "first by size is Beta (5000)");
+
+    model.move_selection_down();
+    check(model.get_selected_app()->name == L"Gamma App", "second by size is Gamma (2000)");
+
+    model.move_selection_down();
+    check(model.get_selected_app()->name == L"Alpha App", "third by size is Alpha (1000)");
+
+    model.move_selection_down();
+    check(model.get_selected_app()->name == L"Alpha App", "clamped at end");
+
+    model.move_home();
+    check(model.get_selected_app()->name == L"Beta App", "move home selects first");
+
+    model.move_end();
+    check(model.get_selected_app()->name == L"Alpha App", "move end selects last");
+
+    // Sort by Name
+    model.set_sort_mode(SortMode::Name);
+    model.move_home();
+    check(model.get_selected_app()->name == L"Alpha App", "first by name is Alpha");
+    model.move_selection_down();
+    check(model.get_selected_app()->name == L"Beta App", "second by name is Beta");
+    model.move_selection_down();
+    check(model.get_selected_app()->name == L"Gamma App", "third by name is Gamma");
+
+    // Sort by Date
+    model.set_sort_mode(SortMode::Date);
+    model.move_home();
+    check(model.get_selected_app()->name == L"Beta App", "first by date is Beta (2026-03-01)");
+    model.move_selection_down();
+    check(model.get_selected_app()->name == L"Gamma App", "second by date is Gamma (2026-02-01)");
+    model.move_selection_down();
+    check(model.get_selected_app()->name == L"Alpha App", "third by date is Alpha (2026-01-01)");
+}
+
+static void test_tui_model_filtering() {
+    TuiModel model;
+    std::vector<TuiAppItem> apps = {
+        {L"Calculator", L"Microsoft", L"2026-01-01", 1000, L"C:\\Calc", AppType::Store, L"", L""},
+        {L"Visual Studio", L"Microsoft", L"2026-03-01", 5000, L"C:\\VS", AppType::Win32, L"", L""},
+        {L"Git", L"Software Freedom", L"2026-02-01", 2000, L"C:\\Git", AppType::Win32, L"", L""}
+    };
+    model.set_apps(apps);
+
+    model.start_filter();
+    check(model.is_filtering(), "is filtering");
+    model.filter_char(L'v');
+    model.filter_char(L'i');
+    model.filter_char(L's');
+
+    check(model.get_filtered_count() == 1, "filtered count is 1 for 'vis'");
+    check(model.get_selected_app()->name == L"Visual Studio", "matched Visual Studio");
+
+    model.filter_backspace();
+    model.filter_backspace();
+    model.filter_backspace();
+    check(model.get_filtered_count() == 3, "backspaced to empty query matches all 3");
+
+    // Filter by publisher
+    model.filter_char(L'f');
+    model.filter_char(L'r');
+    model.filter_char(L'e');
+    model.filter_char(L'e');
+    check(model.get_filtered_count() == 1, "matches Git via publisher");
+    check(model.get_selected_app()->name == L"Git", "matched Git");
+
+    model.end_filter(false);
+    check(!model.is_filtering(), "filter cancelled");
+    check(model.get_filtered_count() == 3, "all items restored after cancel");
+}
+
+static void test_tui_model_plan_exclusions() {
+    TuiModel model;
+    PreviewPlan plan;
+    plan.ready = true;
+    ScoredArtifact a1;
+    a1.identifier = L"HKLM\\Software\\TestKey";
+    a1.kind = ArtifactKind::RegistryKey;
+    a1.score = 90;
+    a1.reasons.push_back({L"rule_1", 90, L"product name match"});
+
+    ScoredArtifact a2;
+    a2.identifier = L"C:\\TestDir";
+    a2.kind = ArtifactKind::Folder;
+    a2.score = 80;
+    a2.reasons.push_back({L"rule_2", 80, L"install root"});
+
+    plan.artifacts = {a1, a2};
+    model.set_preview_plan(plan);
+
+    model.open_plan_view();
+    check(model.get_current_screen() == TuiScreen::PlanDetails, "screen is PlanDetails");
+    check(model.get_plan_items().size() == 2, "2 plan items");
+    check(!model.get_plan_items()[0].excluded, "first item not excluded initially");
+    check(!model.get_plan_items()[1].excluded, "second item not excluded initially");
+
+    model.toggle_current_plan_item();
+    check(model.get_plan_items()[0].excluded, "first item excluded after toggle");
+
+    model.move_plan_down();
+    check(model.get_plan_selected_index() == 1, "selected second item");
+    model.toggle_current_plan_item();
+    check(model.get_plan_items()[1].excluded, "second item excluded after toggle");
+
+    model.close_plan_view();
+    check(model.get_current_screen() == TuiScreen::List, "screen returned to List");
+}
+
+static void test_tui_model_confirm_dialog() {
+    TuiModel model;
+    std::vector<TuiAppItem> apps = {
+        {L"Firefox", L"Mozilla", L"2026-01-01", 1000, L"C:\\Firefox", AppType::Win32, L"", L""}
+    };
+    model.set_apps(apps);
+
+    model.open_confirm_dialog();
+    check(model.get_current_screen() == TuiScreen::ConfirmDialog, "screen is ConfirmDialog");
+    check(model.get_confirm_expected() == L"Firefox", "expected is Firefox");
+    check(!model.can_confirm(), "cannot confirm empty input");
+
+    for (wchar_t ch : std::wstring(L"fire")) {
+        model.confirm_input_char(ch);
+    }
+    check(!model.can_confirm(), "cannot confirm partial input");
+
+    for (wchar_t ch : std::wstring(L"fox")) {
+        model.confirm_input_char(ch);
+    }
+    check(model.can_confirm(), "can confirm exact match (case-insensitive)");
+
+    model.confirm_input_backspace();
+    check(!model.can_confirm(), "cannot confirm after backspace");
+
+    model.close_confirm_dialog();
+    check(model.get_current_screen() == TuiScreen::List, "returned to List");
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -1599,6 +1764,16 @@ int main() {
     test_audit_journal();
     std::wcout << L"[RUN] test_quarantine_and_restore_cycle\n" << std::flush;
     test_quarantine_and_restore_cycle();
+    std::wcout << L"[RUN] test_tui_text_width_and_truncation\n" << std::flush;
+    test_tui_text_width_and_truncation();
+    std::wcout << L"[RUN] test_tui_model_navigation_and_sorting\n" << std::flush;
+    test_tui_model_navigation_and_sorting();
+    std::wcout << L"[RUN] test_tui_model_filtering\n" << std::flush;
+    test_tui_model_filtering();
+    std::wcout << L"[RUN] test_tui_model_plan_exclusions\n" << std::flush;
+    test_tui_model_plan_exclusions();
+    std::wcout << L"[RUN] test_tui_model_confirm_dialog\n" << std::flush;
+    test_tui_model_confirm_dialog();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;

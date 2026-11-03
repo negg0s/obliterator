@@ -8,6 +8,7 @@
 #endif
 #include <windows.h>
 
+#include "obliterator/app_type.hpp"
 #include "obliterator/result.hpp"
 
 #include <cstdint>
@@ -19,10 +20,13 @@ namespace obliterator {
 
 struct InstalledAppInfo {
     std::wstring name;
+    std::wstring publisher;
     std::wstring install_location;
     std::wstring install_date;
     uint64_t size_bytes{0};
     std::wstring root_path;
+    AppType type{AppType::Win32};
+    std::wstring uninstall_string;
     bool is_uwp{false};
     std::wstring uwp_package_full_name;
     std::wstring uwp_package_family_name;

@@ -25,6 +25,8 @@
 #include "obliterator/audit.hpp"
 #include "obliterator/crypto.hpp"
 #include "obliterator/wiper.hpp"
+#include "obliterator/tui.hpp"
+#include "obliterator/executor.hpp"
 
 #include <fcntl.h>
 #include <filesystem>
@@ -219,6 +221,10 @@ int wmain(int argc, wchar_t* argv[]) {
         if (options.json) {
             Logger::error(L"No target specified for JSON mode. Provide a target name or path.");
             return ExitCode::Error;
+        }
+
+        if (is_console_interactive()) {
+            return TuiRunner::run(options);
         }
 
         const auto apps = UserInterface::enumerate_installed_apps();
@@ -438,216 +444,12 @@ int wmain(int argc, wchar_t* argv[]) {
         }
     }
 
-    FinalReport final_report;
-    final_report.target_name = target.name;
-    final_report.target_root = target.root_path;
-    final_report.artifacts = scored_artifacts;
-
-    int64_t restore_pt_seq = 0;
-    if (!options.no_restore_point && !options.dry_run) {
-        Logger::info(L"Creating System Restore Point...");
-        auto rp_res = RestorePointManager::create_restore_point(target.name, options.require_restore_point);
-        if (!rp_res) {
-            Logger::error(L"Failed to create System Restore Point: " + rp_res.error().message());
-            return ExitCode::Error;
-        }
-        restore_pt_seq = rp_res.value().sequence_number;
-    }
-
-    // Phase 1: Defuse restart and watchdog mechanisms
-    Logger::info(L"Defusing restart mechanisms, service failure actions, and tasks...");
-    const auto defuse_report = RecoveryDefuser::defuse_all(
-        target, plan.services_to_remove, plan.tasks_to_remove);
-
-    // Phase 2: Freeze target processes to prevent watchdog respawning
-    if (!plan.processes_to_terminate.empty()) {
-        Logger::info(L"Freezing target processes to prevent watchdog respawning...");
-        ProcessManager::suspend_target_processes(target.root_path);
-    }
-
-    // Phase 3: Terminate target processes
-    if (!plan.processes_to_terminate.empty()) {
-        Logger::info(L"Terminating target processes...");
-        const auto report = ProcessManager::terminate_target_processes(
-            target.root_path, options.timeout_seconds);
-
-        final_report.processes_found = report.found;
-        final_report.processes_killed = report.killed;
-        final_report.processes_failed = report.failed;
-    }
-
-    // Phase 4: Release file locks
-    Logger::info(L"Releasing file locks...");
-    const auto unlock_report = FileUnlocker::release_locks(
-        target.root_path, !options.no_handle_kill);
-    final_report.handles_closed = unlock_report.handles_closed;
-
-    // Phase 5: Remove services, drivers, and scheduled tasks
-    if (!plan.services_to_remove.empty() || !plan.tasks_to_remove.empty()) {
-        Logger::info(L"Removing services, drivers, and scheduled tasks...");
-        const auto svc_report = ServiceManager::remove_services_and_tasks(target.root_path);
-
-        final_report.services_stopped = svc_report.services_stopped;
-        final_report.services_deleted = svc_report.services_deleted;
-        final_report.drivers_stopped = svc_report.drivers_stopped;
-        final_report.drivers_deleted = svc_report.drivers_deleted;
-        final_report.tasks_deleted = svc_report.tasks_deleted;
-
-        if (svc_report.reboot_required) {
-            final_report.reboot_required = true;
-            final_report.pending_reboot_items.push_back(L"One or more drivers marked for deletion");
-        }
-    }
-
-    // Phase 6: Wipe physical directory tree or Quarantine
-    PhysicalWipeReport wipe_report;
-    Result<void> wipe_res = Result<void>::success();
-
-    if (options.quarantine) {
-        Logger::info(L"Quarantining target files instead of deleting...");
-        auto q_res = QuarantineManager::quarantine_target(target);
-        if (!q_res) {
-            Logger::error(L"Quarantine failed: " + q_res.error().message());
-            wipe_res = q_res.error();
-        } else {
-            const auto& q_rep = q_res.value();
-            final_report.files_deleted = q_rep.files_quarantined;
-            final_report.bytes_freed = q_rep.bytes_quarantined;
-        }
-    } else {
-        Logger::info(L"Deleting physical directory tree...");
-        const bool compute_sizes = options.json || !options.yes;
-        if (!target.root_path.empty()) {
-            wipe_res = FileWiper::wipe_physical_tree(target.root_path, wipe_report, compute_sizes);
-        }
-
-        final_report.files_deleted = wipe_report.files_deleted;
-        final_report.directories_deleted = wipe_report.directories_deleted;
-        final_report.junctions_deleted = wipe_report.junctions_deleted;
-        final_report.acl_resets = wipe_report.acl_resets;
-        final_report.bytes_freed = wipe_report.bytes_freed;
-        final_report.files_scheduled_for_reboot = wipe_report.files_scheduled_for_reboot;
-        final_report.directories_scheduled_for_reboot = wipe_report.directories_scheduled_for_reboot;
-
-        if (wipe_report.reboot_required) {
-            final_report.reboot_required = true;
-            for (const auto& path : wipe_report.failed_paths) {
-                final_report.pending_reboot_items.push_back(path);
-            }
-        }
-    }
-
-    // Phase 7: Clean registry entries
-    Logger::info(L"Cleaning registry entries...");
-    RegistryCleanReport reg_report;
-    auto reg_res = RegistryCleaner::clean(target, reg_report, options.no_backup);
-    for (const auto& prof : target_profiles) {
-        ProfileManager::clean_profile_registry(prof, target, reg_report, options.no_backup);
-    }
-
-    final_report.uninstall_keys_deleted = reg_report.uninstall_keys_deleted;
-    final_report.autorun_values_deleted = reg_report.autorun_values_deleted;
-    final_report.shell_entries_deleted = reg_report.shell_entries_deleted;
-    final_report.product_keys_deleted = reg_report.product_keys_deleted;
-    final_report.total_reg_keys_deleted = reg_report.total_keys_deleted;
-    final_report.total_reg_values_deleted = reg_report.total_values_deleted;
-    final_report.items_backed_up = reg_report.items_backed_up;
-    final_report.backup_directory = reg_report.backup_directory;
-
-    // Phase 8: Clean leftovers on disk and firewall rules
-    Logger::info(L"Cleaning leftovers on disk and firewall rules...");
-    const auto left_report = LeftoversCleaner::clean_leftovers(target, options.aggressive, all_installed_apps);
-
-    final_report.folders_deleted = left_report.folders_deleted;
-    final_report.shortcuts_deleted = left_report.shortcuts_deleted;
-    final_report.firewall_rules_deleted = left_report.firewall_rules_deleted;
-    final_report.possible_leftovers_skipped = left_report.possible_leftovers_skipped;
-
-    // Clean additional multi-profile leftovers
-    namespace fs = std::filesystem;
-    for (const auto& prof : target_profiles) {
-        const auto prof_items = ProfileManager::find_profile_file_leftovers(prof, target);
-        for (const auto& item : prof_items) {
-            ArtifactKind k = (item.kind == LeftoverKind::Shortcut) ? ArtifactKind::Shortcut : ArtifactKind::Folder;
-            std::wstring ref_path;
-            if (item.kind == LeftoverKind::Shortcut) {
-                ref_path = LeftoversCleaner::resolve_shortcut_target(item.path_or_name);
-            }
-            ScoredArtifact scored = ConfidenceEngine::evaluate(item.path_or_name, k, target, all_installed_apps, ref_path);
-            if (scored.category == ArtifactConfidenceCategory::Skip) {
-                continue;
-            }
-            if (scored.category == ArtifactConfidenceCategory::Review && !options.aggressive) {
-                final_report.possible_leftovers_skipped++;
-                continue;
-            }
-            if (item.kind == LeftoverKind::Folder) {
-                PhysicalWipeReport wipe_rep;
-                auto del_res = FileWiper::wipe_physical_tree(item.path_or_name, wipe_rep);
-                if (del_res && !fs::exists(item.path_or_name)) {
-                    final_report.folders_deleted++;
-                }
-            } else if (item.kind == LeftoverKind::Shortcut) {
-                WipeReport wipe_rep;
-                auto del_res = FileWiper::delete_file_lazy(item.path_or_name, wipe_rep);
-                if (del_res && !fs::exists(item.path_or_name)) {
-                    final_report.shortcuts_deleted++;
-                }
-            }
-        }
-    }
-
-    // Phase 9: Post-reboot resumption setup
-    if (final_report.reboot_required) {
-        ResumeState resume_state;
-        resume_state.target_name = target.name;
-        resume_state.target_root = target.root_path;
-        resume_state.aggressive = options.aggressive;
-        resume_state.pending_files = wipe_report.failed_paths;
-        for (const auto& dir : wipe_report.failed_paths) {
-            std::error_code ec;
-            if (fs::is_directory(dir, ec)) {
-                resume_state.pending_directories.push_back(dir);
-            }
-        }
-        for (const auto& s : plan.services_to_remove) {
-            if (s.is_driver) {
-                resume_state.pending_drivers.push_back(s.name);
-            } else {
-                resume_state.pending_services.push_back(s.name);
-            }
-        }
-
-        auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-        wchar_t time_buf[64]{};
-        _wctime_s(time_buf, 64, &now);
-        resume_state.created_at = time_buf;
-        while (!resume_state.created_at.empty() &&
-               (resume_state.created_at.back() == L'\n' || resume_state.created_at.back() == L'\r')) {
-            resume_state.created_at.pop_back();
-        }
-
-        ResumeManager::save_resume_state(resume_state);
-        Logger::info(L"Scheduled post-reboot resumption via RunOnce and %ProgramData%\\obliterator\\resume.json");
-    }
-
-    final_report.success = wipe_res.has_value() && reg_res.has_value();
-    if (!final_report.success) {
-        final_report.exit_code = ExitCode::Error;
-    } else if (final_report.reboot_required) {
-        final_report.exit_code = ExitCode::SuccessRebootRequired;
-    } else {
-        final_report.exit_code = ExitCode::Success;
-    }
+    FinalReport final_report = execute_obliteration(target, options, {});
 
     if (options.json) {
         final_report.print_json();
     } else {
         final_report.print_text();
-    }
-
-    if (restore_pt_seq > 0) {
-        RestorePointManager::finish_restore_point(restore_pt_seq, !final_report.success);
     }
 
     return final_report.exit_code;

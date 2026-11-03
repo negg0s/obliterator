@@ -9,6 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_compile_definitions(UNICODE _UNICODE)
 
 add_library(obliterator_core STATIC
+    include/obliterator/app_type.hpp
     include/obliterator/cli.hpp
     include/obliterator/error.hpp
     include/obliterator/handles.hpp
@@ -41,6 +42,9 @@ add_library(obliterator_core STATIC
     include/obliterator/audit.hpp
     include/obliterator/quarantine.hpp
     include/obliterator/wiper.hpp
+    include/obliterator/tui_model.hpp
+    include/obliterator/tui.hpp
+    include/obliterator/executor.hpp
     src/cli.cpp
     src/confidence_engine.cpp
     src/defuse.cpp
@@ -70,6 +74,9 @@ add_library(obliterator_core STATIC
     src/unlocker.cpp
     src/uwp.cpp
     src/wiper.cpp
+    src/tui_model.cpp
+    src/tui.cpp
+    src/executor.cpp
 )
 
 target_include_directories(obliterator_core PUBLIC
