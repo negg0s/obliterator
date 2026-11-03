@@ -279,6 +279,27 @@ static void run_scan_benchmark_suite(size_t iterations = 10) {
     std::wcout << L"======================================================\n\n";
 }
 
+static void run_thread_sweep_benchmark(const std::wstring& target_dir) {
+    const std::vector<size_t> thread_counts = {1, 2, 4, 6, 8, 12, 16};
+    std::wcout << L"\n======================================================\n";
+    std::wcout << L"Running Thread Count Scaling Benchmark (5,000 files)...\n";
+    std::wcout << L"======================================================\n";
+
+    for (size_t tc : thread_counts) {
+        std::vector<double> del_times;
+        for (int run = 0; run < 3; ++run) {
+            TestTreeGenerator::generate(target_dir, 5000, 600);
+            PhysicalWipeReport report;
+            FileWiper::wipe_physical_tree(target_dir, report, true, tc);
+            del_times.push_back(report.deletion_ms);
+        }
+        std::wcout << L"Threads: " << std::setw(2) << tc
+                   << L" | Median Deletion: " << std::fixed << std::setprecision(2)
+                   << calculate_median(del_times) << L" ms\n";
+    }
+    std::wcout << L"======================================================\n\n";
+}
+
 int wmain(int argc, wchar_t* argv[]) {
     _setmode(_fileno(stdout), _O_U8TEXT);
     _setmode(_fileno(stderr), _O_U8TEXT);
@@ -308,6 +329,11 @@ int wmain(int argc, wchar_t* argv[]) {
             }
         } else if (arg == L"--bench-scan") {
             mode = L"--scan";
+        } else if (arg == L"--bench-threads") {
+            mode = L"--threads";
+            if (i + 1 < argc && argv[i + 1][0] != L'-') {
+                target = argv[++i];
+            }
         } else if (arg == L"--all") {
             mode = L"--all";
             if (i + 1 < argc && argv[i + 1][0] != L'-') {
@@ -318,6 +344,8 @@ int wmain(int argc, wchar_t* argv[]) {
 
     if (mode == L"--scan") {
         run_scan_benchmark_suite(10);
+    } else if (mode == L"--threads") {
+        run_thread_sweep_benchmark(target);
     } else if (mode == L"--wipe") {
         run_wipe_benchmark_suite(target, 10);
     } else {
