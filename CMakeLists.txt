@@ -32,13 +32,19 @@ add_library(obliterator_core STATIC
     include/obliterator/uwp.hpp
     include/obliterator/portable.hpp
     include/obliterator/profile.hpp
+    include/obliterator/defuse.hpp
+    include/obliterator/pending_rename.hpp
+    include/obliterator/resume.hpp
+    include/obliterator/safe_mode.hpp
     include/obliterator/wiper.hpp
     src/cli.cpp
     src/confidence_engine.cpp
+    src/defuse.cpp
     src/error.cpp
     src/leftovers.cpp
     src/log.cpp
     src/path.cpp
+    src/pending_rename.cpp
     src/plan.cpp
     src/portable.cpp
     src/privileges.cpp
@@ -46,6 +52,8 @@ add_library(obliterator_core STATIC
     src/profile.cpp
     src/registry_cleaner.cpp
     src/report.cpp
+    src/resume.cpp
+    src/safe_mode.cpp
     src/safety.cpp
     src/service.cpp
     src/target.cpp
@@ -68,6 +76,7 @@ target_link_libraries(obliterator_core PUBLIC
     ole32
     oleaut32
     shell32
+    wbemuuid
     windowsapp
 )
 
