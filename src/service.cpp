@@ -48,6 +48,9 @@ std::wstring ServiceManager::normalize_service_image_path(std::wstring_view raw_
     if (path.starts_with(L"\\??\\") || path.starts_with(L"\\\\?\\")) {
         path.erase(0, 4);
     }
+    if (path.empty()) {
+        return {};
+    }
 
     // Replace NT SystemRoot with environment variable prefix
     if (PathHelper::to_lower_unicode(path).starts_with(L"\\systemroot\\")) {
@@ -55,14 +58,14 @@ std::wstring ServiceManager::normalize_service_image_path(std::wstring_view raw_
     }
 
     // Handle quoted command lines
-    if (path.front() == L'\"') {
+    if (!path.empty() && path.front() == L'\"') {
         const size_t end_quote = path.find(L'\"', 1);
         if (end_quote != std::wstring::npos) {
             path = path.substr(1, end_quote - 1);
         } else {
             path.erase(0, 1);
         }
-    } else {
+    } else if (!path.empty()) {
         const std::wstring lower = PathHelper::to_lower_unicode(path);
         size_t cutoff = std::wstring::npos;
         auto find_ext_boundary = [&](std::wstring_view ext) -> size_t {
@@ -93,6 +96,10 @@ std::wstring ServiceManager::normalize_service_image_path(std::wstring_view raw_
         if (cutoff != std::wstring::npos) {
             path = path.substr(0, cutoff);
         }
+    }
+
+    if (path.empty()) {
+        return {};
     }
 
     // Expand relative system driver paths like system32\drivers\foo.sys
