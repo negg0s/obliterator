@@ -1,3 +1,5 @@
+#include "obliterator/confidence_config.hpp"
+#include "obliterator/confidence_engine.hpp"
 #include "obliterator/error.hpp"
 #include "obliterator/handles.hpp"
 #include "obliterator/leftovers.hpp"
@@ -740,6 +742,369 @@ static void test_uninstall_string_parsing() {
     check(p_comma.arguments == L"-arg", "comma path arg extracted");
 }
 
+static void test_confidence_engine_scenarios() {
+    Target target;
+    target.name = L"SuperTool";
+    target.publisher = L"AcmeCorp";
+    target.root_path = L"C:\\Program Files\\AcmeCorp\\SuperTool";
+    target.product_code = L"{12345678-ABCD-1234-ABCD-1234567890AB}";
+
+    // Scenario 1: Direct install path in shortcut
+    {
+        ArtifactCandidate c;
+        c.identifier = L"C:\\Users\\User\\Desktop\\SuperTool.lnk";
+        c.kind = ArtifactKind::Shortcut;
+        c.referenced_path = L"C:\\Program Files\\AcmeCorp\\SuperTool\\tool.exe";
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score == 100, "Scenario 1: Shortcut direct path score 100");
+        check(res.category == ArtifactConfidenceCategory::Safe, "Scenario 1: Category Safe");
+    }
+
+    // Scenario 2: Direct install path in firewall rule
+    {
+        ArtifactCandidate c;
+        c.identifier = L"SuperTool Inbound";
+        c.kind = ArtifactKind::FirewallRule;
+        c.referenced_path = L"C:\\Program Files\\AcmeCorp\\SuperTool\\tool.exe";
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score == 100, "Scenario 2: Firewall direct path score 100");
+        check(res.category == ArtifactConfidenceCategory::Safe, "Scenario 2: Category Safe");
+    }
+
+    // Scenario 3: Direct install path in service image
+    {
+        ArtifactCandidate c;
+        c.identifier = L"SuperToolSvc";
+        c.kind = ArtifactKind::Service;
+        c.referenced_path = L"C:\\Program Files\\AcmeCorp\\SuperTool\\svc.exe";
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score == 100, "Scenario 3: Service direct path score 100");
+        check(res.category == ArtifactConfidenceCategory::Safe, "Scenario 3: Category Safe");
+    }
+
+    // Scenario 4: Direct install path in scheduled task action
+    {
+        ArtifactCandidate c;
+        c.identifier = L"\\AcmeCorp\\SuperToolUpdate";
+        c.kind = ArtifactKind::Task;
+        c.referenced_path = L"C:\\Program Files\\AcmeCorp\\SuperTool\\updater.exe";
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score == 100, "Scenario 4: Task direct path score 100");
+        check(res.category == ArtifactConfidenceCategory::Safe, "Scenario 4: Category Safe");
+    }
+
+    // Scenario 5: Direct install path in registry autorun
+    {
+        ArtifactCandidate c;
+        c.identifier = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run [SuperTool]";
+        c.kind = ArtifactKind::RegistryValue;
+        c.referenced_path = L"\"C:\\Program Files\\AcmeCorp\\SuperTool\\tool.exe\" --minimized";
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score == 100, "Scenario 5: Autorun direct path score 100");
+        check(res.category == ArtifactConfidenceCategory::Safe, "Scenario 5: Category Safe");
+    }
+
+    // Scenario 6: CLSID InprocServer32 server points to target path
+    {
+        ArtifactCandidate c;
+        c.identifier = L"CLSID\\{A1B2C3D4-E5F6-7890-1234-567890ABCDEF}\\InprocServer32";
+        c.kind = ArtifactKind::RegistryKey;
+        c.referenced_path = L"C:\\Program Files\\AcmeCorp\\SuperTool\\handler.dll";
+        c.is_clsid = true;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score >= 90, "Scenario 6: CLSID InprocServer32 score >= 90");
+        check(res.category == ArtifactConfidenceCategory::Safe, "Scenario 6: Category Safe");
+    }
+
+    // Scenario 7: CLSID LocalServer32 server points to target path
+    {
+        ArtifactCandidate c;
+        c.identifier = L"CLSID\\{B2C3D4E5-F6A7-8901-2345-67890ABCDEF1}\\LocalServer32";
+        c.kind = ArtifactKind::RegistryKey;
+        c.referenced_path = L"C:\\Program Files\\AcmeCorp\\SuperTool\\server.exe";
+        c.is_clsid = true;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score >= 90, "Scenario 7: CLSID LocalServer32 score >= 90");
+        check(res.category == ArtifactConfidenceCategory::Safe, "Scenario 7: Category Safe");
+    }
+
+    // Scenario 8: TypeLib win32 server points to target path
+    {
+        ArtifactCandidate c;
+        c.identifier = L"TypeLib\\{C3D4E5F6-A7B8-9012-3456-7890ABCDEF12}\\1.0\\0\\win32";
+        c.kind = ArtifactKind::RegistryKey;
+        c.referenced_path = L"C:\\Program Files\\AcmeCorp\\SuperTool\\typelib.tlb";
+        c.is_typelib = true;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score >= 90, "Scenario 8: TypeLib win32 score >= 90");
+        check(res.category == ArtifactConfidenceCategory::Safe, "Scenario 8: Category Safe");
+    }
+
+    // Scenario 9: Matching product GUID from Uninstall or MSI
+    {
+        ArtifactCandidate c;
+        c.identifier = L"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{12345678-ABCD-1234-ABCD-1234567890AB}";
+        c.kind = ArtifactKind::RegistryKey;
+        c.guid = L"{12345678-ABCD-1234-ABCD-1234567890AB}";
+        c.is_guid_match = true;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score == 85, "Scenario 9: Product GUID match score 85");
+        check(res.category == ArtifactConfidenceCategory::Safe, "Scenario 9: Category Safe");
+    }
+
+    // Scenario 10: App Paths key pointing to target executable
+    {
+        ArtifactCandidate c;
+        c.identifier = L"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\supertool.exe";
+        c.kind = ArtifactKind::RegistryKey;
+        c.referenced_path = L"C:\\Program Files\\AcmeCorp\\SuperTool\\supertool.exe";
+        c.is_app_path = true;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score >= 80, "Scenario 10: App Paths score >= 80");
+        check(res.category == ArtifactConfidenceCategory::Safe, "Scenario 10: Category Safe");
+    }
+
+    // Scenario 11: File association ProgID pointing to target
+    {
+        ArtifactCandidate c;
+        c.identifier = L"HKCR\\SuperTool.Document\\shell\\open\\command";
+        c.kind = ArtifactKind::RegistryKey;
+        c.referenced_path = L"\"C:\\Program Files\\AcmeCorp\\SuperTool\\tool.exe\" \"%1\"";
+        c.is_association_or_cache = true;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score >= 80, "Scenario 11: File association score >= 80");
+        check(res.category == ArtifactConfidenceCategory::Safe, "Scenario 11: Category Safe");
+    }
+
+    // Scenario 12: MUICache entry pointing to target
+    {
+        ArtifactCandidate c;
+        c.identifier = L"HKCU\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\MuiCache [C:\\Program Files\\AcmeCorp\\SuperTool\\tool.exe.ApplicationCompany]";
+        c.kind = ArtifactKind::RegistryValue;
+        c.referenced_path = L"C:\\Program Files\\AcmeCorp\\SuperTool\\tool.exe";
+        c.is_association_or_cache = true;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score >= 80, "Scenario 12: MUICache score >= 80");
+        check(res.category == ArtifactConfidenceCategory::Safe, "Scenario 12: Category Safe");
+    }
+
+    // Scenario 13: Exact product name match on AppData folder
+    {
+        ArtifactCandidate c;
+        c.identifier = L"C:\\Users\\User\\AppData\\Local\\SuperTool";
+        c.kind = ArtifactKind::Folder;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score == 50, "Scenario 13: Exact product name score 50");
+        check(res.category == ArtifactConfidenceCategory::Review, "Scenario 13: Category Review");
+    }
+
+    // Scenario 14: Exact publisher name match on registry key
+    {
+        ArtifactCandidate c;
+        c.identifier = L"HKCU\\Software\\AcmeCorp";
+        c.kind = ArtifactKind::RegistryKey;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score == 50, "Scenario 14: Exact publisher name score 50");
+        check(res.category == ArtifactConfidenceCategory::Review, "Scenario 14: Category Review");
+    }
+
+    // Scenario 15: Product folder inside publisher directory
+    {
+        ArtifactCandidate c;
+        c.identifier = L"C:\\Users\\User\\AppData\\Roaming\\AcmeCorp\\SuperTool";
+        c.kind = ArtifactKind::Folder;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score == 60, "Scenario 15: Product in publisher dir score 60");
+        check(res.category == ArtifactConfidenceCategory::Review, "Scenario 15: Category Review");
+    }
+
+    // Scenario 16: Partial product name match alone
+    {
+        ArtifactCandidate c;
+        c.identifier = L"C:\\Users\\User\\AppData\\Local\\SuperToolHelper";
+        c.kind = ArtifactKind::Folder;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score == 20, "Scenario 16: Partial product name score 20");
+        check(res.category == ArtifactConfidenceCategory::Skip, "Scenario 16: Category Skip");
+    }
+
+    // Scenario 17: Partial product name inside publisher directory
+    {
+        ArtifactCandidate c;
+        c.identifier = L"C:\\Users\\User\\AppData\\Local\\AcmeCorp\\SuperToolHelper";
+        c.kind = ArtifactKind::Folder;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score == 20, "Scenario 17: Partial name in publisher score 20");
+        check(res.category == ArtifactConfidenceCategory::Skip, "Scenario 17: Category Skip");
+    }
+
+    // Scenario 18: Generic name 'Common' without other proof
+    {
+        ArtifactCandidate c;
+        c.identifier = L"C:\\Program Files\\Common";
+        c.kind = ArtifactKind::Folder;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score == 0, "Scenario 18: Generic Common score 0");
+        check(res.category == ArtifactConfidenceCategory::Skip, "Scenario 18: Category Skip");
+        check(res.generic_name_zeroed, "Scenario 18: generic_name_zeroed true");
+    }
+
+    // Scenario 19: Generic name 'Data' without other proof
+    {
+        ArtifactCandidate c;
+        c.identifier = L"C:\\Users\\User\\AppData\\Local\\Data";
+        c.kind = ArtifactKind::Folder;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score == 0, "Scenario 19: Generic Data score 0");
+        check(res.category == ArtifactConfidenceCategory::Skip, "Scenario 19: Category Skip");
+        check(res.generic_name_zeroed, "Scenario 19: generic_name_zeroed true");
+    }
+
+    // Scenario 20: Generic name 'Cache' without other proof
+    {
+        ArtifactCandidate c;
+        c.identifier = L"C:\\Users\\User\\AppData\\Local\\Cache";
+        c.kind = ArtifactKind::Folder;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score == 0, "Scenario 20: Generic Cache score 0");
+        check(res.category == ArtifactConfidenceCategory::Skip, "Scenario 20: Category Skip");
+    }
+
+    // Scenario 21: Generic name 'Config' without other proof
+    {
+        ArtifactCandidate c;
+        c.identifier = L"C:\\Users\\User\\AppData\\Roaming\\Config";
+        c.kind = ArtifactKind::Folder;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score == 0, "Scenario 21: Generic Config score 0");
+        check(res.category == ArtifactConfidenceCategory::Skip, "Scenario 21: Category Skip");
+    }
+
+    // Scenario 22: Generic name 'Shared' without other proof
+    {
+        ArtifactCandidate c;
+        c.identifier = L"C:\\ProgramData\\Shared";
+        c.kind = ArtifactKind::Folder;
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score == 0, "Scenario 22: Generic Shared score 0");
+        check(res.category == ArtifactConfidenceCategory::Skip, "Scenario 22: Category Skip");
+    }
+
+    // Scenario 23: Generic folder 'Common Files' that contains a direct install path reference
+    {
+        ArtifactCandidate c;
+        c.identifier = L"C:\\Program Files\\Common Files\\SuperTool";
+        c.kind = ArtifactKind::Folder;
+        c.referenced_path = L"C:\\Program Files\\AcmeCorp\\SuperTool";
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score >= 100, "Scenario 23: Generic folder with direct path score >= 100");
+        check(!res.generic_name_zeroed, "Scenario 23: Not zeroed due to direct path proof");
+        check(res.category == ArtifactConfidenceCategory::Safe, "Scenario 23: Category Safe");
+    }
+
+    // Scenario 24: Threshold boundary test: score exactly at Safe threshold (75)
+    {
+        ScoredArtifact sa;
+        sa.score = ConfidenceWeights::kSafeThreshold; // 75
+        sa.is_protected = false;
+        sa.referenced_by_other_app = false;
+        if (sa.score >= ConfidenceWeights::kSafeThreshold && !sa.is_protected && !sa.referenced_by_other_app) {
+            sa.category = ArtifactConfidenceCategory::Safe;
+        }
+        check(sa.category == ArtifactConfidenceCategory::Safe, "Scenario 24: Score 75 is Safe");
+    }
+
+    // Scenario 25: Threshold boundary test: score just below Safe threshold (74)
+    {
+        ScoredArtifact sa;
+        sa.score = ConfidenceWeights::kSafeThreshold - 1; // 74
+        sa.is_protected = false;
+        sa.referenced_by_other_app = false;
+        if (sa.score >= ConfidenceWeights::kSafeThreshold && !sa.is_protected && !sa.referenced_by_other_app) {
+            sa.category = ArtifactConfidenceCategory::Safe;
+        } else if (sa.score >= ConfidenceWeights::kReviewThreshold) {
+            sa.category = ArtifactConfidenceCategory::Review;
+        } else {
+            sa.category = ArtifactConfidenceCategory::Skip;
+        }
+        check(sa.category == ArtifactConfidenceCategory::Review, "Scenario 25: Score 74 is Review");
+    }
+
+    // Scenario 26: Threshold boundary test: score exactly at Review threshold (40)
+    {
+        ScoredArtifact sa;
+        sa.score = ConfidenceWeights::kReviewThreshold; // 40
+        if (sa.score >= ConfidenceWeights::kSafeThreshold) {
+            sa.category = ArtifactConfidenceCategory::Safe;
+        } else if (sa.score >= ConfidenceWeights::kReviewThreshold) {
+            sa.category = ArtifactConfidenceCategory::Review;
+        } else {
+            sa.category = ArtifactConfidenceCategory::Skip;
+        }
+        check(sa.category == ArtifactConfidenceCategory::Review, "Scenario 26: Score 40 is Review");
+    }
+
+    // Scenario 27: Threshold boundary test: score just below Review threshold (39)
+    {
+        ScoredArtifact sa;
+        sa.score = ConfidenceWeights::kReviewThreshold - 1; // 39
+        if (sa.score >= ConfidenceWeights::kSafeThreshold) {
+            sa.category = ArtifactConfidenceCategory::Safe;
+        } else if (sa.score >= ConfidenceWeights::kReviewThreshold) {
+            sa.category = ArtifactConfidenceCategory::Review;
+        } else {
+            sa.category = ArtifactConfidenceCategory::Skip;
+        }
+        check(sa.category == ArtifactConfidenceCategory::Skip, "Scenario 27: Score 39 is Skip");
+    }
+
+    // Scenario 28: Protected path disqualification (Windows System32 cannot be marked safe)
+    {
+        ArtifactCandidate c;
+        c.identifier = L"C:\\Windows\\System32\\tool.dll";
+        c.kind = ArtifactKind::File;
+        c.referenced_path = L"C:\\Program Files\\AcmeCorp\\SuperTool\\tool.exe";
+        auto res = ConfidenceEngine::evaluate(c, target);
+        check(res.score >= 100, "Scenario 28: Score is 100 from direct reference");
+        check(res.is_protected, "Scenario 28: is_protected is true");
+        check(res.category == ArtifactConfidenceCategory::Review, "Scenario 28: Demoted from Safe to Review");
+    }
+
+    // Scenario 29: Shared publisher conflict: two installed apps with same publisher
+    {
+        InstalledAppInfo other_app;
+        other_app.name = L"AcmeStudio";
+        other_app.install_location = L"C:\\Program Files\\AcmeCorp\\Studio";
+        std::vector<InstalledAppInfo> installed = { other_app };
+
+        ArtifactCandidate c;
+        c.identifier = L"C:\\Users\\User\\AppData\\Roaming\\AcmeCorp";
+        c.kind = ArtifactKind::Folder;
+        auto res = ConfidenceEngine::evaluate(c, target, installed);
+        check(res.score == 50, "Scenario 29: Publisher match score 50");
+        check(res.referenced_by_other_app, "Scenario 29: Flagged as referenced by other app");
+        check(res.conflicting_app_name == L"AcmeStudio", "Scenario 29: Conflicting app name recorded");
+        check(res.category == ArtifactConfidenceCategory::Review, "Scenario 29: Demoted to Review");
+    }
+
+    // Scenario 30: False positive prevention: another app with similar name is installed
+    {
+        InstalledAppInfo other_app;
+        other_app.name = L"SuperTool Pro";
+        other_app.install_location = L"C:\\Program Files\\AcmeCorp\\SuperTool Pro";
+        std::vector<InstalledAppInfo> installed = { other_app };
+
+        ArtifactCandidate c;
+        c.identifier = L"C:\\Users\\User\\AppData\\Local\\SuperTool Pro";
+        c.kind = ArtifactKind::Folder;
+        auto res = ConfidenceEngine::evaluate(c, target, installed);
+        check(res.referenced_by_other_app, "Scenario 30: Flagged as owned by other installed app");
+        check(res.conflicting_app_name == L"SuperTool Pro", "Scenario 30: Conflicting app is SuperTool Pro");
+        check(res.category != ArtifactConfidenceCategory::Safe, "Scenario 30: Not Safe due to conflict");
+        check(res.category == ArtifactConfidenceCategory::Skip, "Scenario 30: Category is Skip");
+    }
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -799,6 +1164,8 @@ int main() {
     test_malformed_path_exception_regression();
     std::wcout << L"[RUN] test_uninstall_string_parsing\n" << std::flush;
     test_uninstall_string_parsing();
+    std::wcout << L"[RUN] test_confidence_engine_scenarios\n" << std::flush;
+    test_confidence_engine_scenarios();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;
