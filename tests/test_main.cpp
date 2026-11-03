@@ -1,5 +1,7 @@
+#include "obliterator/audit.hpp"
 #include "obliterator/confidence_config.hpp"
 #include "obliterator/confidence_engine.hpp"
+#include "obliterator/crypto.hpp"
 #include "obliterator/defuse.hpp"
 #include "obliterator/error.hpp"
 #include "obliterator/handles.hpp"
@@ -11,9 +13,11 @@
 #include "obliterator/privileges.hpp"
 #include "obliterator/process.hpp"
 #include "obliterator/profile.hpp"
+#include "obliterator/quarantine.hpp"
 #include "obliterator/registry_cleaner.hpp"
 #include "obliterator/report.hpp"
 #include "obliterator/result.hpp"
+#include "obliterator/restore_point.hpp"
 #include "obliterator/resume.hpp"
 #include "obliterator/safe_mode.hpp"
 #include "obliterator/safety.hpp"
@@ -1377,6 +1381,147 @@ static void test_mutual_watchdog_freeze_and_termination() {
     FileWiper::wipe_physical_tree(test_dir.wstring(), wipe_rep);
 }
 
+static void test_crypto_sha256() {
+    std::wstring empty_hash = CryptoHelper::compute_sha256_bytes("", 0);
+    check(empty_hash == L"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "sha256 empty");
+
+    std::string text = "hello world";
+    std::wstring text_hash = CryptoHelper::compute_sha256_bytes(text.data(), text.size());
+    check(text_hash == L"b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9", "sha256 hello world");
+}
+
+static void test_audit_journal() {
+    AuditJournal::log_before(L"test_audit_action", L"C:\\dummy\\target.txt", L"before_details");
+    AuditJournal::log_after(L"test_audit_action", L"C:\\dummy\\target.txt", true, 0, L"after_details");
+
+    const std::wstring journal_path = AuditJournal::get_journal_file_path();
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    check(fs::exists(journal_path, ec), "audit.jsonl exists");
+
+    std::wifstream in(journal_path);
+    check(in.is_open(), "open audit.jsonl");
+    std::wstring line;
+    bool found_action = false;
+    while (std::getline(in, line)) {
+        if (line.find(L"test_audit_action") != std::wstring::npos) {
+            found_action = true;
+            check(line.find(L"\"timestamp\":") != std::wstring::npos, "audit line has timestamp");
+            check(line.find(L"\"phase\":") != std::wstring::npos, "audit line has phase");
+        }
+    }
+    check(found_action, "found test audit action in log");
+}
+
+static void test_quarantine_and_restore_cycle() {
+    namespace fs = std::filesystem;
+    const fs::path test_dir = L"D:\\Projects\\obliterator\\build\\test_quarantine_app";
+    const fs::path sub_dir = test_dir / L"sub";
+    fs::create_directories(sub_dir);
+
+    const fs::path file_path = sub_dir / L"document.bin";
+    {
+        std::ofstream out(file_path, std::ios::binary);
+        for (int i = 0; i < 4096; ++i) {
+            char b = static_cast<char>((i * 37) & 0xFF);
+            out.write(&b, 1);
+        }
+    }
+
+    const std::wstring initial_sha256 = CryptoHelper::compute_sha256_file(file_path.wstring());
+    check(!initial_sha256.empty(), "initial sha256 non empty");
+
+    // Set custom modification time
+    FILETIME ftExpectedWrite{};
+    ftExpectedWrite.dwHighDateTime = 0x01DA4000;
+    ftExpectedWrite.dwLowDateTime = 0x12345678;
+
+    FILETIME ftExpectedCreate{};
+    ftExpectedCreate.dwHighDateTime = 0x01DA3000;
+    ftExpectedCreate.dwLowDateTime = 0x87654321;
+
+    {
+        UniqueHandle hSet(CreateFileW(
+            file_path.wstring().c_str(),
+            FILE_WRITE_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            nullptr
+        ));
+        check(hSet.is_valid(), "open file to set times");
+        check(SetFileTime(hSet.get(), &ftExpectedCreate, nullptr, &ftExpectedWrite) != 0, "set custom file times");
+    }
+
+    const std::wstring initial_sddl = QuarantineManager::get_path_sddl(file_path.wstring());
+
+    Target target;
+    target.name = L"QuarantineTestApp";
+    target.root_path = test_dir.wstring();
+
+    // Quarantine target
+    auto q_res = QuarantineManager::quarantine_target(target);
+    check(q_res.has_value(), "quarantine succeeds");
+    check(q_res.value().success, "quarantine report success true");
+    check(q_res.value().files_quarantined == 1, "quarantined 1 file");
+
+    // Original file must NOT exist
+    std::error_code ec;
+    check(!fs::exists(file_path, ec), "original file moved to quarantine");
+
+    // Quarantine session folder must exist
+    const std::wstring session_id = q_res.value().session_id;
+    const std::wstring session_dir = q_res.value().session_directory;
+    check(fs::exists(session_dir + L"\\manifest.json", ec), "manifest.json exists in session");
+    check(fs::exists(session_dir + L"\\session.json", ec), "session.json exists in session");
+
+    // Restore session
+    auto r_res = QuarantineManager::restore_session(session_id);
+    check(r_res.has_value(), "restore succeeds");
+    check(r_res.value().success, "restore report success true");
+    check(r_res.value().files_restored == 1, "restored 1 file");
+
+    // Original file MUST exist again
+    check(fs::exists(file_path, ec), "file restored to original path");
+    check(fs::file_size(file_path, ec) == 4096, "restored file size matches");
+
+    // Byte-for-byte SHA256 match
+    const std::wstring restored_sha256 = CryptoHelper::compute_sha256_file(file_path.wstring());
+    check(restored_sha256 == initial_sha256, "byte-for-byte sha256 matches initial file");
+
+    // Verification of modification time
+    {
+        UniqueHandle hVerify(CreateFileW(
+            file_path.wstring().c_str(),
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            nullptr
+        ));
+        check(hVerify.is_valid(), "open restored file for timestamp verify");
+        FILETIME ftCreate{}, ftAccess{}, ftWrite{};
+        check(GetFileTime(hVerify.get(), &ftCreate, &ftAccess, &ftWrite) != 0, "get file times");
+        check(ftWrite.dwHighDateTime == ftExpectedWrite.dwHighDateTime &&
+              ftWrite.dwLowDateTime == ftExpectedWrite.dwLowDateTime, "restored last write time matches expected exactly");
+    }
+
+    // SDDL verification
+    const std::wstring restored_sddl = QuarantineManager::get_path_sddl(file_path.wstring());
+    if (!initial_sddl.empty()) {
+        check(!restored_sddl.empty(), "restored sddl is present");
+    }
+
+    // Purge session
+    check(QuarantineManager::purge_session(session_id).has_value(), "purge quarantine session");
+    check(!fs::exists(session_dir, ec), "quarantine session directory purged");
+
+    PhysicalWipeReport wipe_rep;
+    FileWiper::wipe_physical_tree(test_dir.wstring(), wipe_rep);
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -1448,6 +1593,12 @@ int main() {
     test_service_failure_actions_defuse();
     std::wcout << L"[RUN] test_mutual_watchdog_freeze_and_termination\n" << std::flush;
     test_mutual_watchdog_freeze_and_termination();
+    std::wcout << L"[RUN] test_crypto_sha256\n" << std::flush;
+    test_crypto_sha256();
+    std::wcout << L"[RUN] test_audit_journal\n" << std::flush;
+    test_audit_journal();
+    std::wcout << L"[RUN] test_quarantine_and_restore_cycle\n" << std::flush;
+    test_quarantine_and_restore_cycle();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;
