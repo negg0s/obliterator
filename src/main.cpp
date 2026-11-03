@@ -293,7 +293,8 @@ int wmain(int argc, wchar_t* argv[]) {
     // Phase 4: Wipe physical directory tree
     Logger::info(L"Deleting physical directory tree...");
     PhysicalWipeReport wipe_report;
-    auto wipe_res = FileWiper::wipe_physical_tree(target.root_path, wipe_report);
+    const bool compute_sizes = options.json || !options.yes;
+    auto wipe_res = FileWiper::wipe_physical_tree(target.root_path, wipe_report, compute_sizes);
 
     final_report.files_deleted = wipe_report.files_deleted;
     final_report.directories_deleted = wipe_report.directories_deleted;

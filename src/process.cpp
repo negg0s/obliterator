@@ -3,6 +3,7 @@
 #include "obliterator/log.hpp"
 #include "obliterator/path.hpp"
 #include "obliterator/safety.hpp"
+#include "obliterator/wiper.hpp"
 
 #include <tlhelp32.h>
 
@@ -45,14 +46,14 @@ static std::wstring query_image_path(HANDLE process) {
     DWORD size = static_cast<DWORD>(buffer.size());
     if (QueryFullProcessImageNameW(process, 0, buffer.data(), &size)) {
         buffer.resize(size);
-        return SafetyValidator::normalize_path(buffer);
+        return buffer;
     }
 
     buffer.resize(32768);
     size = static_cast<DWORD>(buffer.size());
     if (QueryFullProcessImageNameW(process, 0, buffer.data(), &size)) {
         buffer.resize(size);
-        return SafetyValidator::normalize_path(buffer);
+        return buffer;
     }
 
     return {};
@@ -83,24 +84,59 @@ bool ProcessManager::is_system_process(const std::wstring& image_path) {
     if (image_path.empty()) {
         return false;
     }
+
+    static const std::wstring lower_win = []() {
+        wchar_t win_dir[MAX_PATH]{};
+        if (GetWindowsDirectoryW(win_dir, MAX_PATH) > 0) {
+            return to_lower_string(SafetyValidator::normalize_path(win_dir));
+        }
+        return std::wstring(L"c:\\windows");
+    }();
+
+    static const std::wstring lower_sys = []() {
+        wchar_t sys_dir[MAX_PATH]{};
+        if (GetSystemDirectoryW(sys_dir, MAX_PATH) > 0) {
+            return to_lower_string(SafetyValidator::normalize_path(sys_dir));
+        }
+        return std::wstring(L"c:\\windows\\system32");
+    }();
+
     const std::wstring lower = to_lower_string(image_path);
-
-    wchar_t win_dir[MAX_PATH]{};
-    if (GetWindowsDirectoryW(win_dir, MAX_PATH) > 0) {
-        const std::wstring lower_win = to_lower_string(SafetyValidator::normalize_path(win_dir));
-        if (lower == lower_win || lower.starts_with(lower_win + L"\\")) {
-            return true;
-        }
+    if (lower == lower_win || lower.starts_with(lower_win + L"\\")) {
+        return true;
+    }
+    if (lower == lower_sys || lower.starts_with(lower_sys + L"\\")) {
+        return true;
     }
 
-    wchar_t sys_dir[MAX_PATH]{};
-    if (GetSystemDirectoryW(sys_dir, MAX_PATH) > 0) {
-        const std::wstring lower_sys = to_lower_string(SafetyValidator::normalize_path(sys_dir));
-        if (lower == lower_sys || lower.starts_with(lower_sys + L"\\")) {
-            return true;
-        }
+    return false;
+}
+
+static bool folder_has_modules(const std::wstring& target_root_path) {
+    WIN32_FIND_DATAW fd{};
+    std::wstring ext_path = FileWiper::ensure_extended_path(target_root_path);
+    UniqueFindHandle h(FindFirstFileW((ext_path + L"\\*.dll").c_str(), &fd));
+    if (h) {
+        return true;
+    }
+    UniqueFindHandle hExe(FindFirstFileW((ext_path + L"\\*.exe").c_str(), &fd));
+    if (hExe) {
+        return true;
     }
 
+    UniqueFindHandle hDir(FindFirstFileW((ext_path + L"\\*").c_str(), &fd));
+    if (hDir) {
+        do {
+            if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
+                wcscmp(fd.cFileName, L".") != 0 && wcscmp(fd.cFileName, L"..") != 0) {
+                std::wstring sub = ext_path + L"\\" + fd.cFileName;
+                UniqueFindHandle hSub(FindFirstFileW((sub + L"\\*.dll").c_str(), &fd));
+                if (hSub) {
+                    return true;
+                }
+            }
+        } while (FindNextFileW(hDir.get(), &fd));
+    }
     return false;
 }
 
@@ -117,8 +153,7 @@ static bool process_has_module_in_path(DWORD pid, const std::wstring& target_roo
     }
 
     do {
-        const std::wstring mod_path = SafetyValidator::normalize_path(me.szExePath);
-        if (PathHelper::is_same_or_subpath(target_root_path, mod_path)) {
+        if (PathHelper::is_same_or_subpath(target_root_path, me.szExePath)) {
             return true;
         }
     } while (Module32NextW(snapshot.get(), &me));
@@ -138,12 +173,7 @@ std::vector<ProcessInfo> ProcessManager::find_target_processes(const std::wstrin
     }
 
     const DWORD self_pid = GetCurrentProcessId();
-    const DWORD parent_pid = get_parent_process_id(self_pid);
-
-    std::unordered_set<DWORD> excluded_pids = {0, 4, self_pid};
-    if (parent_pid != 0) {
-        excluded_pids.insert(parent_pid);
-    }
+    DWORD parent_pid = 0;
 
     struct RawEntry {
         DWORD pid;
@@ -159,8 +189,18 @@ std::vector<ProcessInfo> ProcessManager::find_target_processes(const std::wstrin
     }
 
     do {
+        if (pe.th32ProcessID == self_pid) {
+            parent_pid = pe.th32ParentProcessID;
+        }
         all_processes.push_back({pe.th32ProcessID, pe.th32ParentProcessID, pe.szExeFile});
     } while (Process32NextW(snap.get(), &pe));
+
+    std::unordered_set<DWORD> excluded_pids = {0, 4, self_pid};
+    if (parent_pid != 0) {
+        excluded_pids.insert(parent_pid);
+    }
+
+    const bool may_have_modules = folder_has_modules(target_root_path);
 
     std::unordered_map<DWORD, std::vector<DWORD>> parent_to_children;
     for (const auto& item : all_processes) {
@@ -196,7 +236,7 @@ std::vector<ProcessInfo> ProcessManager::find_target_processes(const std::wstrin
 
         if (PathHelper::is_same_or_subpath(target_root_path, image_path)) {
             is_match = true;
-        } else if (process_has_module_in_path(item.pid, target_root_path)) {
+        } else if (may_have_modules && process_has_module_in_path(item.pid, target_root_path)) {
             is_match = true;
             by_module = true;
         }
