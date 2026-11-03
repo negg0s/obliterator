@@ -1,0 +1,6 @@
+# Created using wingetcreate
+PackageIdentifier: negg0s.obliterator
+PackageVersion: 0.2.0
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.6.0

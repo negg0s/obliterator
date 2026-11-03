@@ -1,0 +1,24 @@
+# Created using wingetcreate
+PackageIdentifier: negg0s.obliterator
+PackageVersion: 0.2.0
+PackageLocale: en-US
+Publisher: negg0s
+PublisherUrl: https://github.com/negg0s
+PublisherSupportUrl: https://github.com/negg0s/obliterator/issues
+Author: negg0s
+PackageName: Obliterator
+PackageUrl: https://github.com/negg0s/obliterator
+License: MIT
+LicenseUrl: https://github.com/negg0s/obliterator/blob/main/LICENSE
+Copyright: Copyright (c) 2026 negg0s
+ShortDescription: Force uninstaller and system cleaner for Windows.
+Description: Obliterator is a high-performance Windows uninstaller and cleaner designed to eliminate stubborn, corrupted, or self-defending software and services without external dependencies.
+Tags:
+  - uninstaller
+  - cleaner
+  - force-remove
+  - win32
+  - cleanup
+ReleaseNotesUrl: https://github.com/negg0s/obliterator/releases/tag/v0.2.0
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
