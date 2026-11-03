@@ -2,6 +2,7 @@
 #include "obliterator/handles.hpp"
 #include "obliterator/plan.hpp"
 #include "obliterator/privileges.hpp"
+#include "obliterator/process.hpp"
 #include "obliterator/result.hpp"
 #include "obliterator/safety.hpp"
 #include "obliterator/target.hpp"
@@ -157,6 +158,23 @@ static void test_install_folder_deduction() {
     check(deduced_cmd_unquoted == L"D:\\Games\\SampleGame", "deduce from unquoted uninstall exe");
 }
 
+static void test_process_management() {
+    check(ProcessManager::is_system_process(L"C:\\Windows\\System32\\svchost.exe"), "svchost is system");
+    check(ProcessManager::is_system_process(L"C:\\Windows\\explorer.exe"), "explorer is system");
+    check(!ProcessManager::is_system_process(L"D:\\Games\\Game.exe"), "game is not system");
+    check(!ProcessManager::is_system_process(L""), "empty is not system");
+
+    FILETIME creation{};
+    check(ProcessManager::query_process_times(GetCurrentProcess(), &creation), "query current process times");
+    check(creation.dwLowDateTime != 0 || creation.dwHighDateTime != 0, "creation time non-zero");
+
+    const DWORD parent_pid = ProcessManager::get_parent_process_id(GetCurrentProcessId());
+    check(parent_pid != 0, "parent process id non-zero");
+
+    const auto procs = ProcessManager::find_target_processes(L"D:\\Projects\\ObliteratorNonExistentTargetDir");
+    check(procs.empty(), "target processes for non-existent path is empty");
+}
+
 static void test_plan_structure() {
     Target target;
     target.name = L"SampleApp";
@@ -169,7 +187,10 @@ static void test_plan_structure() {
     });
 
     Plan plan(target);
+    plan.processes_to_terminate.push_back({1234, L"Sample.exe", L"D:\\Apps\\SampleApp\\Sample.exe", L"image path"});
+
     check(!plan.is_empty(), "plan is not empty");
+    check(plan.processes_to_terminate.size() == 1, "1 process in plan");
     check(plan.directories_to_remove.size() == 1, "1 directory in plan");
     check(plan.directories_to_remove[0] == L"D:\\Apps\\SampleApp", "directory matches target root");
     check(plan.registry_keys_to_remove.size() == 1, "1 registry key in plan");
@@ -187,6 +208,7 @@ int main() {
     test_win32_error_and_result();
     test_safety_validation();
     test_install_folder_deduction();
+    test_process_management();
     test_plan_structure();
 
     std::cout << "All tests passed successfully.\n";

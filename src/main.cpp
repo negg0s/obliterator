@@ -2,6 +2,7 @@
 #include "obliterator/log.hpp"
 #include "obliterator/plan.hpp"
 #include "obliterator/privileges.hpp"
+#include "obliterator/process.hpp"
 #include "obliterator/target.hpp"
 
 #include <iostream>
@@ -15,16 +16,18 @@ struct CommandLineOptions {
     bool dry_run{false};
     bool yes{false};
     bool verbose{false};
+    uint32_t timeout_seconds{5};
 };
 
 static void print_usage() {
-    std::wcout << L"Usage: obliterator <target-name-or-path> [--dry-run] [--yes] [--verbose]\n\n"
+    std::wcout << L"Usage: obliterator <target-name-or-path> [--dry-run] [--yes] [--verbose] [--timeout <seconds>]\n\n"
                << L"Arguments:\n"
                << L"  <target-name-or-path>  Target directory or application name to wipe\n\n"
                << L"Options:\n"
                << L"  --dry-run              Inspect and plan without modifying the system\n"
                << L"  --yes, -y              Skip confirmation prompt\n"
                << L"  --verbose, -v          Enable debug output\n"
+               << L"  --timeout <sec>        Process kill wait timeout in seconds (default: 5)\n"
                << L"  --help, -h             Display this help message\n";
 }
 
@@ -40,6 +43,18 @@ static Result<CommandLineOptions> parse_arguments(int argc, wchar_t* argv[]) {
             options.yes = true;
         } else if (arg == L"--verbose" || arg == L"-v") {
             options.verbose = true;
+        } else if (arg == L"--timeout") {
+            if (i + 1 < argc) {
+                try {
+                    options.timeout_seconds = static_cast<uint32_t>(std::stoul(argv[++i]));
+                } catch (...) {
+                    Logger::error(L"Invalid timeout value provided");
+                    return Win32Error::from_code(ERROR_INVALID_PARAMETER);
+                }
+            } else {
+                Logger::error(L"Missing argument for --timeout");
+                return Win32Error::from_code(ERROR_INVALID_PARAMETER);
+            }
         } else if (arg == L"--help" || arg == L"-h") {
             print_usage();
             ExitProcess(0);
@@ -97,6 +112,18 @@ int wmain(int argc, wchar_t* argv[]) {
     const auto& target = target_res.value();
     Plan plan(target);
 
+    // Discover processes associated with the target directory
+    const auto target_procs = ProcessManager::find_target_processes(target.root_path);
+    for (const auto& proc : target_procs) {
+        std::wstring reason = L"image path";
+        if (proc.matched_as_descendant) {
+            reason = L"descendant process";
+        } else if (proc.matched_by_module) {
+            reason = L"loaded module";
+        }
+        plan.processes_to_terminate.push_back({proc.pid, proc.name, proc.image_path, reason});
+    }
+
     if (options.dry_run) {
         Logger::info(L"Dry-run mode active; displaying plan without making modifications");
         plan.print();
@@ -104,5 +131,24 @@ int wmain(int argc, wchar_t* argv[]) {
     }
 
     plan.print();
+
+    if (!plan.processes_to_terminate.empty()) {
+        Logger::info(L"Terminating target processes...");
+        const auto report = ProcessManager::terminate_target_processes(
+            target.root_path, options.timeout_seconds);
+
+        std::wcout << L"Process summary: found " << report.found
+                   << L", killed " << report.killed
+                   << L", failed " << report.failed << L"\n";
+
+        if (!report.failures.empty()) {
+            std::wcout << L"Failed process terminations:\n";
+            for (const auto& f : report.failures) {
+                std::wcout << L"  [PID " << f.pid << L"] " << f.name
+                           << L" - " << f.reason << L"\n";
+            }
+        }
+    }
+
     return 0;
 }

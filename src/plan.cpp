@@ -34,12 +34,29 @@ Plan::Plan(Target t) : target(std::move(t)) {
 }
 
 bool Plan::is_empty() const noexcept {
-    return directories_to_remove.empty() && registry_keys_to_remove.empty();
+    return processes_to_terminate.empty() &&
+           directories_to_remove.empty() &&
+           registry_keys_to_remove.empty();
 }
 
 void Plan::print() const {
     std::wcout << L"\nExecution Plan for: " << target.name << L"\n";
     std::wcout << L"Root path: " << target.root_path << L"\n\n";
+
+    if (!processes_to_terminate.empty()) {
+        std::wcout << L"Processes to terminate (" << processes_to_terminate.size() << L"):\n";
+        for (const auto& proc : processes_to_terminate) {
+            std::wcout << L"  [PID " << proc.pid << L"] " << proc.name;
+            if (!proc.match_reason.empty()) {
+                std::wcout << L" (" << proc.match_reason << L")";
+            }
+            std::wcout << L"\n";
+            if (!proc.image_path.empty()) {
+                std::wcout << L"        " << proc.image_path << L"\n";
+            }
+        }
+        std::wcout << L"\n";
+    }
 
     if (!directories_to_remove.empty()) {
         std::wcout << L"Directories to delete (" << directories_to_remove.size() << L"):\n";

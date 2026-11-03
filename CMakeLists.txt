@@ -14,6 +14,7 @@ add_library(obliterator_core STATIC
     include/obliterator/log.hpp
     include/obliterator/plan.hpp
     include/obliterator/privileges.hpp
+    include/obliterator/process.hpp
     include/obliterator/result.hpp
     include/obliterator/safety.hpp
     include/obliterator/target.hpp
@@ -21,6 +22,7 @@ add_library(obliterator_core STATIC
     src/log.cpp
     src/plan.cpp
     src/privileges.cpp
+    src/process.cpp
     src/safety.cpp
     src/target.cpp
 )
