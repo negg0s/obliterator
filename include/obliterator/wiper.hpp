@@ -10,6 +10,7 @@
 
 #include "obliterator/result.hpp"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -23,9 +24,25 @@ struct WipeReport {
     std::vector<std::wstring> failed_paths;
 };
 
+struct PhysicalWipeReport {
+    size_t files_deleted{0};
+    size_t directories_deleted{0};
+    size_t junctions_deleted{0};
+    size_t files_scheduled_for_reboot{0};
+    size_t directories_scheduled_for_reboot{0};
+    size_t acl_resets{0};
+    uint64_t bytes_freed{0};
+    bool reboot_required{false};
+    std::vector<std::wstring> failed_paths;
+};
+
 class FileWiper {
 public:
-    static Result<void> wipe_directory_tree(const std::wstring& target_root, WipeReport& report);
+    static Result<void> wipe_physical_tree(const std::wstring& target_root,
+                                           PhysicalWipeReport& report);
+    static Result<void> wipe_directory_tree(const std::wstring& target_root,
+                                            WipeReport& report);
+
     static Result<void> delete_file_lazy(const std::wstring& path, WipeReport& report);
     static Result<void> delete_directory_lazy(const std::wstring& path, WipeReport& report);
 
@@ -33,6 +50,7 @@ public:
     static bool strip_file_attributes(const std::wstring& path);
     static std::wstring ensure_extended_path(const std::wstring& path);
     static bool is_reparse_point(const std::wstring& path);
+    static std::wstring format_bytes(uint64_t bytes);
 };
 
 } // namespace obliterator

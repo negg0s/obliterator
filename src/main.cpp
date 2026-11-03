@@ -203,14 +203,26 @@ int wmain(int argc, wchar_t* argv[]) {
     }
 
     Logger::info(L"Deleting directory tree...");
-    WipeReport wipe_report;
-    auto wipe_res = FileWiper::wipe_directory_tree(target.root_path, wipe_report);
+    PhysicalWipeReport wipe_report;
+    auto wipe_res = FileWiper::wipe_physical_tree(target.root_path, wipe_report);
 
     std::wcout << L"Filesystem summary: "
                << wipe_report.files_deleted << L" files deleted, "
                << wipe_report.directories_deleted << L" directories deleted, "
                << wipe_report.junctions_deleted << L" junctions deleted, "
-               << wipe_report.acl_resets << L" ACL take-overs performed\n";
+               << wipe_report.acl_resets << L" ACL take-overs performed, "
+               << FileWiper::format_bytes(wipe_report.bytes_freed) << L" freed\n";
+
+    if (wipe_report.files_scheduled_for_reboot > 0 || wipe_report.directories_scheduled_for_reboot > 0) {
+        std::wcout << L"Reboot pending: "
+                   << wipe_report.files_scheduled_for_reboot << L" files and "
+                   << wipe_report.directories_scheduled_for_reboot
+                   << L" directories scheduled for removal upon reboot\n";
+    }
+
+    if (wipe_report.reboot_required) {
+        Logger::warn(L"One or more locked items require a system reboot to complete deletion");
+    }
 
     if (!wipe_res) {
         Logger::warn(L"Some filesystem items could not be deleted: " + wipe_res.error().message());

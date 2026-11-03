@@ -274,6 +274,53 @@ static void test_reparse_point_and_acl() {
     fs::remove_all(base);
 }
 
+static void test_format_bytes() {
+    check(FileWiper::format_bytes(0) == L"0 B", "format 0 B");
+    check(FileWiper::format_bytes(512) == L"512 B", "format 512 B");
+    check(FileWiper::format_bytes(1024) == L"1.00 KB", "format 1.00 KB");
+    check(FileWiper::format_bytes(1048576) == L"1.00 MB", "format 1.00 MB");
+    check(FileWiper::format_bytes(1073741824) == L"1.00 GB", "format 1.00 GB");
+}
+
+static void test_physical_wipe_tree() {
+    namespace fs = std::filesystem;
+    const fs::path base = L"D:\\Projects\\obliterator\\build\\test_physical_sandbox";
+    const fs::path root = base / L"nested_app";
+    const fs::path sub1 = root / L"sub1";
+    const fs::path sub2 = sub1 / L"sub2";
+
+    fs::create_directories(sub2);
+
+    const std::string content1(1000, 'A');
+    const std::string content2(500, 'B');
+    const std::string content3(2000, 'C');
+
+    {
+        std::ofstream out(sub2 / L"file1.bin", std::ios::binary);
+        out.write(content1.data(), static_cast<std::streamsize>(content1.size()));
+    }
+    {
+        std::ofstream out(sub1 / L"file2.txt", std::ios::binary);
+        out.write(content2.data(), static_cast<std::streamsize>(content2.size()));
+    }
+    {
+        std::ofstream out(root / L"root_file.dat", std::ios::binary);
+        out.write(content3.data(), static_cast<std::streamsize>(content3.size()));
+    }
+
+    PhysicalWipeReport report;
+    auto res = FileWiper::wipe_physical_tree(root.wstring(), report);
+
+    check(res.has_value(), "wipe_physical_tree returns success");
+    check(!fs::exists(root), "root directory completely removed");
+    check(report.files_deleted == 3, "exactly 3 files deleted");
+    check(report.directories_deleted == 3, "exactly 3 directories deleted");
+    check(report.bytes_freed == 3500, "freed 3500 bytes accurately counted");
+    check(report.failed_paths.empty(), "no failed paths in physical wipe");
+
+    fs::remove_all(base);
+}
+
 static void test_plan_structure() {
     Target target;
     target.name = L"SampleApp";
@@ -318,6 +365,8 @@ int main() {
     test_service_manager();
     test_extended_path_formatting();
     test_reparse_point_and_acl();
+    test_format_bytes();
+    test_physical_wipe_tree();
     test_plan_structure();
 
     std::cout << "All tests passed successfully.\n";
