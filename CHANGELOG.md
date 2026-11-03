@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2026-11-04
 
 ### Added
+- System diagnostics inspector (`--diagnose`) collecting OS build, token privileges, real-time protection state, and protected processes with automated personal data sanitization.
 - Fullscreen Terminal User Interface (TUI) using pure Win32 Virtual Terminal processing and double-buffer rendering.
 - Background preview plan calculation with real-time artifact counts and spinner indicator.
 - Artifact plan details view with confidence score visualization and individual item exclusion.
@@ -17,12 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Statically linked C++ runtime (/MT) eliminating external Visual C++ redistributable dependencies.
 - Machine-readable CycloneDX v1.5 Software Bill of Materials (SBOM) generator script.
 - Package manager manifests for Windows Package Manager (WinGet) and Scoop with autoupdate.
-- Documentation for code signing, package publishing, and build reproducibility.
+- Documentation for code signing, package publishing, screencast demonstrations, architecture specification, and build reproducibility.
+- Security policy, contributing guidelines, code of conduct, and issue/PR templates.
 
 ### Changed
 - Enforced compiler and linker security hardening: Control Flow Guard (/guard:cf, /GUARD:CF), CET Shadow Stack compatibility (/CETCOMPAT), /GS, /DYNAMICBASE, /HIGHENTROPYVA, and /Qspectre.
 - Unified the 9-phase obliteration execution pipeline across both CLI and TUI modes.
 - Added deterministic build linker flag (/Brepro).
+
+### Fixed
+- Out-of-bounds front element access on empty normalized service image paths discovered during libFuzzer validation.
 
 ### Security
 - Hardened PE binaries against ROP attacks and stack buffer overflows.
