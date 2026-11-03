@@ -20,6 +20,7 @@ add_library(obliterator_core STATIC
     include/obliterator/service.hpp
     include/obliterator/target.hpp
     include/obliterator/unlocker.hpp
+    include/obliterator/wiper.hpp
     src/error.cpp
     src/log.cpp
     src/plan.cpp
@@ -29,6 +30,7 @@ add_library(obliterator_core STATIC
     src/service.cpp
     src/target.cpp
     src/unlocker.cpp
+    src/wiper.cpp
 )
 
 target_include_directories(obliterator_core PUBLIC

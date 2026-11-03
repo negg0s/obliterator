@@ -6,6 +6,7 @@
 #include "obliterator/service.hpp"
 #include "obliterator/target.hpp"
 #include "obliterator/unlocker.hpp"
+#include "obliterator/wiper.hpp"
 
 #include <iostream>
 #include <string>
@@ -199,6 +200,20 @@ int wmain(int argc, wchar_t* argv[]) {
         for (const auto& w : svc_report.warnings) {
             Logger::warn(w);
         }
+    }
+
+    Logger::info(L"Deleting directory tree...");
+    WipeReport wipe_report;
+    auto wipe_res = FileWiper::wipe_directory_tree(target.root_path, wipe_report);
+
+    std::wcout << L"Filesystem summary: "
+               << wipe_report.files_deleted << L" files deleted, "
+               << wipe_report.directories_deleted << L" directories deleted, "
+               << wipe_report.junctions_deleted << L" junctions deleted, "
+               << wipe_report.acl_resets << L" ACL take-overs performed\n";
+
+    if (!wipe_res) {
+        Logger::warn(L"Some filesystem items could not be deleted: " + wipe_res.error().message());
     }
 
     return 0;

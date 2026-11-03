@@ -8,10 +8,14 @@
 #include "obliterator/service.hpp"
 #include "obliterator/target.hpp"
 #include "obliterator/unlocker.hpp"
+#include "obliterator/wiper.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <winioctl.h>
 
 using namespace obliterator;
 
@@ -207,6 +211,69 @@ static void test_service_manager() {
     check(target_tasks.empty(), "find target tasks on non-existent path is empty");
 }
 
+static void test_extended_path_formatting() {
+    check(FileWiper::ensure_extended_path(L"C:\\Foo") == L"\\\\?\\C:\\Foo", "ensure extended format");
+    check(FileWiper::ensure_extended_path(L"\\\\?\\C:\\Foo") == L"\\\\?\\C:\\Foo", "already extended format");
+    check(FileWiper::ensure_extended_path(L"\\\\server\\share") == L"\\\\?\\UNC\\server\\share", "unc extended format");
+}
+
+static void test_reparse_point_and_acl() {
+    namespace fs = std::filesystem;
+    const fs::path base = L"D:\\Projects\\obliterator\\build\\test_sandbox";
+    fs::create_directories(base);
+
+    // Test 1: Deletion of Read-Only file
+    const fs::path ro_file = base / L"readonly_test.txt";
+    {
+        std::ofstream out(ro_file);
+        out << "test content";
+    }
+    SetFileAttributesW(ro_file.c_str(), FILE_ATTRIBUTE_READONLY);
+
+    WipeReport ro_report;
+    auto ro_res = FileWiper::delete_file_lazy(ro_file.wstring(), ro_report);
+    check(ro_res.has_value(), "delete readonly file succeeds");
+    check(!fs::exists(ro_file), "readonly file removed from disk");
+    check(ro_report.files_deleted == 1, "report records 1 deleted file");
+
+    // Test 2: Reparse point (Junction) safety
+    // The junction inside target_dir points to outside_dir containing a canary file.
+    // Deleting target_dir must remove the junction, but MUST NOT delete outside_dir or canary!
+    const fs::path outside_dir = base / L"outside_folder";
+    const fs::path canary_file = outside_dir / L"canary.txt";
+    fs::create_directories(outside_dir);
+    {
+        std::ofstream out(canary_file);
+        out << "canary intact";
+    }
+
+    const fs::path target_dir = base / L"target_to_wipe";
+    const fs::path junction_path = target_dir / L"junction_link";
+    fs::create_directories(target_dir);
+
+    // Create directory junction using Windows mklink /J
+    std::wstring cmd = L"cmd.exe /c mklink /J \"" + junction_path.wstring() +
+                       L"\" \"" + outside_dir.wstring() + L"\" >nul";
+    _wsystem(cmd.c_str());
+
+    check(fs::exists(junction_path), "junction created successfully");
+    check(FileWiper::is_reparse_point(junction_path.wstring()), "junction recognized as reparse point");
+
+    WipeReport tree_report;
+    auto wipe_res = FileWiper::wipe_directory_tree(target_dir.wstring(), tree_report);
+    check(wipe_res.has_value(), "wipe directory tree succeeds");
+    check(!fs::exists(target_dir), "target tree removed");
+    check(tree_report.junctions_deleted >= 1, "junction recorded as deleted");
+
+    // Critical assertion: outside directory and canary file must remain untouched
+    check(fs::exists(outside_dir), "outside directory preserved");
+    check(fs::exists(canary_file), "canary file preserved");
+
+    // Clean up outside directory
+    fs::remove_all(outside_dir);
+    fs::remove_all(base);
+}
+
 static void test_plan_structure() {
     Target target;
     target.name = L"SampleApp";
@@ -249,6 +316,8 @@ int main() {
     test_process_management();
     test_unlocker();
     test_service_manager();
+    test_extended_path_formatting();
+    test_reparse_point_and_acl();
     test_plan_structure();
 
     std::cout << "All tests passed successfully.\n";
