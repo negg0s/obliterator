@@ -60,6 +60,65 @@ int wmain(int argc, wchar_t* argv[]) {
         return ExitCode::Error;
     }
 
+    if (options.bench) {
+        if (options.target.empty()) {
+            Logger::error(L"No target specified for benchmark. Usage: obliterator --bench <path>");
+            return ExitCode::Error;
+        }
+
+        auto priv_res = enable_required_privileges();
+        if (!priv_res) {
+            Logger::warn(std::wstring(L"Could not assign all process privileges: ") +
+                         priv_res.error().message());
+        }
+
+        struct BenchmarkTimer {
+            LARGE_INTEGER freq;
+            LARGE_INTEGER start;
+            BenchmarkTimer() {
+                QueryPerformanceFrequency(&freq);
+                QueryPerformanceCounter(&start);
+            }
+            double elapsed_ms() const {
+                LARGE_INTEGER now;
+                QueryPerformanceCounter(&now);
+                return static_cast<double>(now.QuadPart - start.QuadPart) * 1000.0 /
+                       static_cast<double>(freq.QuadPart);
+            }
+        };
+
+        BenchmarkTimer total_timer;
+
+        BenchmarkTimer proc_timer;
+        const auto procs = ProcessManager::find_target_processes(options.target);
+        const double proc_ms = proc_timer.elapsed_ms();
+
+        PhysicalWipeReport wipe_report;
+        const auto wipe_res = FileWiper::wipe_physical_tree(options.target, wipe_report);
+
+        BenchmarkTimer reg_timer;
+        RegistryCleanReport reg_report;
+        Target bench_target;
+        bench_target.name = L"BenchmarkTarget";
+        bench_target.root_path = options.target;
+        const auto reg_res = RegistryCleaner::clean(bench_target, reg_report, true);
+        const double reg_ms = reg_timer.elapsed_ms();
+
+        const double total_ms = total_timer.elapsed_ms();
+
+        std::wcout << L"\nBenchmark Results for: " << options.target << L"\n";
+        std::wcout << L"  Process search:    " << proc_ms << L" ms (" << procs.size() << L" processes)\n";
+        std::wcout << L"  File enumeration:  " << wipe_report.enumeration_ms << L" ms\n";
+        std::wcout << L"  File deletion:     " << wipe_report.deletion_ms << L" ms ("
+                   << wipe_report.files_deleted << L" files, "
+                   << wipe_report.directories_deleted << L" dirs)\n";
+        std::wcout << L"  Registry scan:     " << reg_ms << L" ms\n";
+        std::wcout << L"  Total duration:    " << total_ms << L" ms\n";
+        std::wcout << L"  Bytes freed:       " << FileWiper::format_bytes(wipe_report.bytes_freed) << L"\n";
+
+        return wipe_res.has_value() ? ExitCode::Success : ExitCode::Error;
+    }
+
     // Interactive mode if no target is provided
     if (options.target.empty()) {
         if (options.json) {

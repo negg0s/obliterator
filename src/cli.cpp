@@ -19,6 +19,7 @@ void CommandLineParser::print_usage() {
                << L"  --timeout <sec>        Process kill wait timeout in seconds (default: 5)\n"
                << L"  --verbose, -v          Enable debug output\n"
                << L"  --json                 Output final report in JSON format\n"
+               << L"  --bench                Run benchmark on target directory with stage timings\n"
                << L"  --install-menu         Add 'Force Obliterate' to folder context menu in HKCU\n"
                << L"  --uninstall-menu       Remove 'Force Obliterate' from folder context menu\n"
                << L"  --help, -h             Display this help message\n";
@@ -44,6 +45,8 @@ Result<CommandLineOptions> CommandLineParser::parse(const std::vector<std::wstri
             options.aggressive = true;
         } else if (arg == L"--json") {
             options.json = true;
+        } else if (arg == L"--bench") {
+            options.bench = true;
         } else if (arg == L"--install-menu") {
             options.install_menu = true;
         } else if (arg == L"--uninstall-menu") {

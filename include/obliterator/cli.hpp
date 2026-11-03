@@ -20,6 +20,7 @@ struct CommandLineOptions {
     bool install_menu{false};
     bool uninstall_menu{false};
     bool help_requested{false};
+    bool bench{false};
     uint32_t timeout_seconds{5};
 };
 

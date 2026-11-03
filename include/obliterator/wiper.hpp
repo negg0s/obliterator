@@ -34,6 +34,8 @@ struct PhysicalWipeReport {
     uint64_t bytes_freed{0};
     bool reboot_required{false};
     std::vector<std::wstring> failed_paths;
+    double enumeration_ms{0.0};
+    double deletion_ms{0.0};
 };
 
 class FileWiper {

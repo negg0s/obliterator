@@ -213,6 +213,23 @@ Result<void> FileWiper::wipe_physical_tree(const std::wstring& target_root,
     std::vector<DirEntry> all_dirs;
     std::vector<FileEntry> files;
 
+    struct ScopedTimer {
+        LARGE_INTEGER freq;
+        LARGE_INTEGER start;
+        ScopedTimer() {
+            QueryPerformanceFrequency(&freq);
+            QueryPerformanceCounter(&start);
+        }
+        double elapsed_ms() const {
+            LARGE_INTEGER now;
+            QueryPerformanceCounter(&now);
+            return static_cast<double>(now.QuadPart - start.QuadPart) * 1000.0 /
+                   static_cast<double>(freq.QuadPart);
+        }
+    };
+
+    ScopedTimer enum_timer;
+
     if ((root_attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
         if ((root_attrs & FILE_ATTRIBUTE_DIRECTORY) != 0) {
             all_dirs.push_back({norm_target, true});
@@ -285,6 +302,10 @@ Result<void> FileWiper::wipe_physical_tree(const std::wstring& target_root,
             } while (FindNextFileW(find_h.get(), &fd));
         }
     }
+
+    report.enumeration_ms = enum_timer.elapsed_ms();
+
+    ScopedTimer del_timer;
 
     std::sort(files.begin(), files.end(), [](const FileEntry& a, const FileEntry& b) {
         return a.path < b.path;
@@ -426,6 +447,8 @@ Result<void> FileWiper::wipe_physical_tree(const std::wstring& target_root,
                          std::to_wstring(err != 0 ? err : GetLastError()) + L")");
         }
     }
+
+    report.deletion_ms = del_timer.elapsed_ms();
 
     if (!report.failed_paths.empty()) {
         return Win32Error::from_code(ERROR_CAN_NOT_COMPLETE);

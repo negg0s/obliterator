@@ -88,7 +88,7 @@ if(MSVC)
     )
 
     set_target_properties(obliterator PROPERTIES
-        LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\""
+        LINK_FLAGS "/MANIFESTUAC:\"level='asInvoker' uiAccess='false'\""
     )
 endif()
 
@@ -129,6 +129,24 @@ if(MSVC)
 endif()
 
 add_test(NAME unit_tests COMMAND obliterator_tests)
+
+add_executable(bench
+    tests/bench.cpp
+)
+
+target_link_libraries(bench PRIVATE
+    obliterator_core
+)
+
+if(MSVC)
+    target_compile_options(bench PRIVATE
+        /W4
+        /WX
+        /permissive-
+        /utf-8
+        /EHsc
+    )
+endif()
 
 option(ENABLE_FUZZING "Build libFuzzer targets" OFF)
 if(ENABLE_FUZZING AND MSVC)
