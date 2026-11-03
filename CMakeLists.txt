@@ -25,7 +25,10 @@ add_library(obliterator_core STATIC
     include/obliterator/service.hpp
     include/obliterator/target.hpp
     include/obliterator/ui.hpp
+    include/obliterator/uninstaller.hpp
     include/obliterator/unlocker.hpp
+    include/obliterator/uwp.hpp
+    include/obliterator/portable.hpp
     include/obliterator/wiper.hpp
     src/cli.cpp
     src/error.cpp
@@ -33,6 +36,7 @@ add_library(obliterator_core STATIC
     src/log.cpp
     src/path.cpp
     src/plan.cpp
+    src/portable.cpp
     src/privileges.cpp
     src/process.cpp
     src/registry_cleaner.cpp
@@ -41,7 +45,9 @@ add_library(obliterator_core STATIC
     src/service.cpp
     src/target.cpp
     src/ui.cpp
+    src/uninstaller.cpp
     src/unlocker.cpp
+    src/uwp.cpp
     src/wiper.cpp
 )
 
@@ -57,6 +63,7 @@ target_link_libraries(obliterator_core PUBLIC
     ole32
     oleaut32
     shell32
+    windowsapp
 )
 
 if(MSVC)

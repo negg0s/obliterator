@@ -20,6 +20,10 @@ void CommandLineParser::print_usage() {
                << L"  --verbose, -v          Enable debug output\n"
                << L"  --json                 Output final report in JSON format\n"
                << L"  --bench                Run benchmark on target directory with stage timings\n"
+               << L"  --force                Skip native uninstaller and obliterate directly\n"
+               << L"  --native-only          Run native uninstaller only, skip forced obliteration\n"
+               << L"  --native-timeout <sec> Native uninstaller wait timeout in seconds (default: 120)\n"
+               << L"  --scan-portable <dir>  Scan directory for portable applications\n"
                << L"  --install-menu         Add 'Force Obliterate' to folder context menu in HKCU\n"
                << L"  --uninstall-menu       Remove 'Force Obliterate' from folder context menu\n"
                << L"  --help, -h             Display this help message\n";
@@ -47,6 +51,28 @@ Result<CommandLineOptions> CommandLineParser::parse(const std::vector<std::wstri
             options.json = true;
         } else if (arg == L"--bench") {
             options.bench = true;
+        } else if (arg == L"--force") {
+            options.force = true;
+        } else if (arg == L"--native-only") {
+            options.native_only = true;
+        } else if (arg == L"--native-timeout") {
+            if (i + 1 < args.size()) {
+                try {
+                    options.native_timeout_seconds = static_cast<uint32_t>(std::stoul(args[++i]));
+                } catch (...) {
+                    Logger::error(L"Invalid timeout value provided for --native-timeout");
+                    return Win32Error::from_code(ERROR_INVALID_PARAMETER);
+                }
+            } else {
+                Logger::error(L"Missing argument for --native-timeout");
+                return Win32Error::from_code(ERROR_INVALID_PARAMETER);
+            }
+        } else if (arg == L"--scan-portable") {
+            if (i + 1 < args.size() && !args[i + 1].starts_with(L"-")) {
+                options.scan_portable_dir = args[++i];
+            } else {
+                options.scan_portable_dir = L".";
+            }
         } else if (arg == L"--install-menu") {
             options.install_menu = true;
         } else if (arg == L"--uninstall-menu") {

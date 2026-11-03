@@ -21,7 +21,11 @@ struct CommandLineOptions {
     bool uninstall_menu{false};
     bool help_requested{false};
     bool bench{false};
+    bool force{false};
+    bool native_only{false};
     uint32_t timeout_seconds{5};
+    uint32_t native_timeout_seconds{120};
+    std::wstring scan_portable_dir;
 };
 
 class CommandLineParser {

@@ -3,6 +3,7 @@
 #include "obliterator/leftovers.hpp"
 #include "obliterator/log.hpp"
 #include "obliterator/plan.hpp"
+#include "obliterator/portable.hpp"
 #include "obliterator/privileges.hpp"
 #include "obliterator/process.hpp"
 #include "obliterator/registry_cleaner.hpp"
@@ -11,7 +12,9 @@
 #include "obliterator/service.hpp"
 #include "obliterator/target.hpp"
 #include "obliterator/ui.hpp"
+#include "obliterator/uninstaller.hpp"
 #include "obliterator/unlocker.hpp"
+#include "obliterator/uwp.hpp"
 #include "obliterator/wiper.hpp"
 
 #include <fcntl.h>
@@ -58,6 +61,12 @@ int wmain(int argc, wchar_t* argv[]) {
         }
         Logger::error(L"Failed to uninstall context menu: " + res.error().message());
         return ExitCode::Error;
+    }
+
+    if (!options.scan_portable_dir.empty()) {
+        auto candidates = PortableScanner::scan(options.scan_portable_dir);
+        PortableScanner::print_report(candidates, options.json);
+        return ExitCode::Success;
     }
 
     if (options.bench) {
@@ -159,12 +168,71 @@ int wmain(int argc, wchar_t* argv[]) {
     }
 
     const auto& target = target_res.value();
-    if (!SafetyValidator::validate_path(target.root_path)) {
+    if (!target.is_uwp && !SafetyValidator::validate_path(target.root_path)) {
         Logger::error(L"Target path rejected by safety checks: " + target.root_path);
         return ExitCode::SafetyViolation;
     }
 
+    // Native uninstaller strategy ("gentle first, force after")
+    const auto native_info = NativeUninstaller::detect(target);
+    if (native_info.type != UninstallerType::None) {
+        Logger::info(std::wstring(L"Detected native uninstaller: ") +
+                     NativeUninstaller::type_name(native_info.type));
+    }
+
+    if (options.force) {
+        Logger::info(L"--force specified; skipping native uninstaller.");
+    } else if (native_info.type == UninstallerType::Unknown) {
+        Logger::warn(L"Unrecognized native uninstaller format. Skipping silent execution to prevent interactive prompts.");
+    } else if (native_info.type != UninstallerType::None) {
+        if (options.dry_run) {
+            std::wcout << L"[DRY RUN] Would execute native uninstaller ("
+                       << NativeUninstaller::type_name(native_info.type)
+                       << L"): " << native_info.quiet_command << L"\n";
+        } else {
+            if (native_info.type == UninstallerType::Uwp) {
+                Logger::info(L"Removing UWP package: " + native_info.package_full_name);
+                auto uwp_res = UwpManager::remove_package(native_info.package_full_name);
+                if (!uwp_res) {
+                    Logger::warn(L"UWP package removal returned error: " + uwp_res.error().message());
+                } else {
+                    Logger::info(L"UWP package removed successfully.");
+                }
+            } else {
+                Logger::info(L"Running native uninstaller with " +
+                             std::to_wstring(options.native_timeout_seconds) + L"s timeout...");
+                auto uninst_res = NativeUninstaller::execute_with_timeout(
+                    native_info,
+                    options.native_timeout_seconds
+                );
+                if (!uninst_res) {
+                    Logger::warn(L"Native uninstaller did not complete successfully: " +
+                                 uninst_res.error().message());
+                } else {
+                    Logger::info(L"Native uninstaller completed.");
+                }
+            }
+
+            if (options.native_only) {
+                Logger::info(L"--native-only flag active; skipping forced obliteration.");
+                return ExitCode::Success;
+            }
+        }
+    } else if (options.native_only) {
+        Logger::error(L"No native uninstaller found for target, cannot satisfy --native-only.");
+        return ExitCode::Error;
+    }
+
     Plan plan(target);
+
+    if (target.is_uwp) {
+        for (const auto& rem_folder : UwpManager::get_remnant_folders(target.uwp_package_family_name)) {
+            plan.leftovers_to_remove.push_back({rem_folder, L"FOLDER", L"DEFINITE", L"UWP package data directory"});
+        }
+        for (const auto& rem_subkey : UwpManager::get_remnant_registry_subkeys(target.uwp_package_family_name)) {
+            plan.registry_keys_to_remove.push_back({HKEY_CURRENT_USER, rem_subkey, 0, L"UWP AppModel registration"});
+        }
+    }
 
     // 1. Discover processes associated with the target directory
     const auto target_procs = ProcessManager::find_target_processes(target.root_path);
@@ -294,7 +362,10 @@ int wmain(int argc, wchar_t* argv[]) {
     Logger::info(L"Deleting physical directory tree...");
     PhysicalWipeReport wipe_report;
     const bool compute_sizes = options.json || !options.yes;
-    auto wipe_res = FileWiper::wipe_physical_tree(target.root_path, wipe_report, compute_sizes);
+    Result<void> wipe_res = Result<void>::success();
+    if (!target.root_path.empty()) {
+        wipe_res = FileWiper::wipe_physical_tree(target.root_path, wipe_report, compute_sizes);
+    }
 
     final_report.files_deleted = wipe_report.files_deleted;
     final_report.directories_deleted = wipe_report.directories_deleted;
