@@ -3,6 +3,7 @@
 #include "obliterator/leftovers.hpp"
 #include "obliterator/log.hpp"
 #include "obliterator/path.hpp"
+#include "obliterator/profile.hpp"
 #include "obliterator/registry_cleaner.hpp"
 #include "obliterator/safety.hpp"
 #include "obliterator/uninstaller.hpp"
@@ -385,7 +386,8 @@ ScoredArtifact ConfidenceEngine::evaluate(
 
 std::vector<ScoredArtifact> ConfidenceEngine::discover_artifacts(
     const Target& target,
-    const std::vector<InstalledAppInfo>& other_installed_apps
+    const std::vector<InstalledAppInfo>& other_installed_apps,
+    const std::vector<UserProfileInfo>& profiles
 ) {
     std::vector<ScoredArtifact> results;
 
@@ -413,6 +415,20 @@ std::vector<ScoredArtifact> ConfidenceEngine::discover_artifacts(
 
         ScoredArtifact scored = evaluate(item.path_or_name, k, target, other_installed_apps, ref_path);
         add_if_not_skip(scored);
+    }
+
+    // 1b. Multi-profile file leftovers
+    for (const auto& prof : profiles) {
+        const auto prof_items = ProfileManager::find_profile_file_leftovers(prof, target);
+        for (const auto& item : prof_items) {
+            ArtifactKind k = (item.kind == LeftoverKind::Shortcut) ? ArtifactKind::Shortcut : ArtifactKind::Folder;
+            std::wstring ref_path;
+            if (item.kind == LeftoverKind::Shortcut) {
+                ref_path = LeftoversCleaner::resolve_shortcut_target(item.path_or_name);
+            }
+            ScoredArtifact scored = evaluate(item.path_or_name, k, target, other_installed_apps, ref_path);
+            add_if_not_skip(scored);
+        }
     }
 
     // 2. Registry autorun entries

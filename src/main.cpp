@@ -7,6 +7,7 @@
 #include "obliterator/portable.hpp"
 #include "obliterator/privileges.hpp"
 #include "obliterator/process.hpp"
+#include "obliterator/profile.hpp"
 #include "obliterator/registry_cleaner.hpp"
 #include "obliterator/report.hpp"
 #include "obliterator/safety.hpp"
@@ -19,6 +20,7 @@
 #include "obliterator/wiper.hpp"
 
 #include <fcntl.h>
+#include <filesystem>
 #include <io.h>
 #include <iostream>
 #include <string>
@@ -180,6 +182,31 @@ int wmain(int argc, wchar_t* argv[]) {
         return ExitCode::SafetyViolation;
     }
 
+    std::vector<UserProfileInfo> target_profiles;
+    if (options.all_users || !options.user_filter.empty()) {
+        target_profiles = ProfileManager::enumerate_profiles(
+            options.include_system_profiles,
+            options.user_filter
+        );
+        if (options.all_users) {
+            Logger::info(L"Targeting all user profiles (" + std::to_wstring(target_profiles.size()) + L" profiles discovered)");
+        } else {
+            Logger::info(L"Targeting user: " + options.user_filter + L" (" + std::to_wstring(target_profiles.size()) + L" profiles matched)");
+        }
+    } else {
+        const std::wstring cur_sid = ProfileManager::get_current_user_sid();
+        auto all_profs = ProfileManager::enumerate_profiles(options.include_system_profiles);
+        for (const auto& p : all_profs) {
+            if (p.sid == cur_sid) {
+                target_profiles.push_back(p);
+                break;
+            }
+        }
+        if (target_profiles.empty() && !all_profs.empty()) {
+            target_profiles.push_back(all_profs.front());
+        }
+    }
+
     // Native uninstaller strategy ("gentle first, force after")
     const auto native_info = NativeUninstaller::detect(target);
     if (native_info.type != UninstallerType::None) {
@@ -306,7 +333,7 @@ int wmain(int argc, wchar_t* argv[]) {
 
     // 8. Discover leftovers with confidence scoring
     const auto all_installed_apps = UserInterface::enumerate_installed_apps();
-    const auto scored_artifacts = ConfidenceEngine::discover_artifacts(target, all_installed_apps);
+    const auto scored_artifacts = ConfidenceEngine::discover_artifacts(target, all_installed_apps, target_profiles);
     for (const auto& art : scored_artifacts) {
         if (art.category == ArtifactConfidenceCategory::Skip) {
             continue;
@@ -401,6 +428,9 @@ int wmain(int argc, wchar_t* argv[]) {
     Logger::info(L"Cleaning registry entries...");
     RegistryCleanReport reg_report;
     auto reg_res = RegistryCleaner::clean(target, reg_report, options.no_backup);
+    for (const auto& prof : target_profiles) {
+        ProfileManager::clean_profile_registry(prof, target, reg_report, options.no_backup);
+    }
 
     final_report.uninstall_keys_deleted = reg_report.uninstall_keys_deleted;
     final_report.autorun_values_deleted = reg_report.autorun_values_deleted;
@@ -419,6 +449,40 @@ int wmain(int argc, wchar_t* argv[]) {
     final_report.shortcuts_deleted = left_report.shortcuts_deleted;
     final_report.firewall_rules_deleted = left_report.firewall_rules_deleted;
     final_report.possible_leftovers_skipped = left_report.possible_leftovers_skipped;
+
+    // Clean additional multi-profile leftovers
+    namespace fs = std::filesystem;
+    for (const auto& prof : target_profiles) {
+        const auto prof_items = ProfileManager::find_profile_file_leftovers(prof, target);
+        for (const auto& item : prof_items) {
+            ArtifactKind k = (item.kind == LeftoverKind::Shortcut) ? ArtifactKind::Shortcut : ArtifactKind::Folder;
+            std::wstring ref_path;
+            if (item.kind == LeftoverKind::Shortcut) {
+                ref_path = LeftoversCleaner::resolve_shortcut_target(item.path_or_name);
+            }
+            ScoredArtifact scored = ConfidenceEngine::evaluate(item.path_or_name, k, target, all_installed_apps, ref_path);
+            if (scored.category == ArtifactConfidenceCategory::Skip) {
+                continue;
+            }
+            if (scored.category == ArtifactConfidenceCategory::Review && !options.aggressive) {
+                final_report.possible_leftovers_skipped++;
+                continue;
+            }
+            if (item.kind == LeftoverKind::Folder) {
+                PhysicalWipeReport wipe_rep;
+                auto del_res = FileWiper::wipe_physical_tree(item.path_or_name, wipe_rep);
+                if (del_res && !fs::exists(item.path_or_name)) {
+                    final_report.folders_deleted++;
+                }
+            } else if (item.kind == LeftoverKind::Shortcut) {
+                WipeReport wipe_rep;
+                auto del_res = FileWiper::delete_file_lazy(item.path_or_name, wipe_rep);
+                if (del_res && !fs::exists(item.path_or_name)) {
+                    final_report.shortcuts_deleted++;
+                }
+            }
+        }
+    }
 
     final_report.success = wipe_res.has_value() && reg_res.has_value();
     if (!final_report.success) {

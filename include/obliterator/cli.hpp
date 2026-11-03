@@ -27,6 +27,9 @@ struct CommandLineOptions {
     uint32_t native_timeout_seconds{120};
     std::wstring scan_portable_dir;
     std::wstring explain_artifact;
+    bool all_users{false};
+    std::wstring user_filter;
+    bool include_system_profiles{false};
 };
 
 class CommandLineParser {

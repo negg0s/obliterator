@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include "obliterator/confidence_config.hpp"
+#include "obliterator/profile.hpp"
 #include "obliterator/target.hpp"
 #include "obliterator/ui.hpp"
 
@@ -88,7 +89,8 @@ public:
 
     static std::vector<ScoredArtifact> discover_artifacts(
         const Target& target,
-        const std::vector<InstalledAppInfo>& other_installed_apps = {}
+        const std::vector<InstalledAppInfo>& other_installed_apps = {},
+        const std::vector<UserProfileInfo>& profiles = {}
     );
 
     static void explain(

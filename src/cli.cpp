@@ -25,6 +25,9 @@ void CommandLineParser::print_usage() {
                << L"  --native-timeout <sec> Native uninstaller wait timeout in seconds (default: 120)\n"
                << L"  --scan-portable <dir>  Scan directory for portable applications\n"
                << L"  --explain <artifact>   Explain confidence score and reasons for an artifact\n"
+               << L"  --all-users            Clean traces in all user profiles on this system\n"
+               << L"  --user <name-or-sid>   Clean traces in specified user profile\n"
+               << L"  --include-system-profiles Include service accounts (SYSTEM, LocalService, NetworkService)\n"
                << L"  --install-menu         Add 'Force Obliterate' to folder context menu in HKCU\n"
                << L"  --uninstall-menu       Remove 'Force Obliterate' from folder context menu\n"
                << L"  --help, -h             Display this help message\n";
@@ -81,6 +84,17 @@ Result<CommandLineOptions> CommandLineParser::parse(const std::vector<std::wstri
                 Logger::error(L"Missing artifact argument for --explain");
                 return Win32Error::from_code(ERROR_INVALID_PARAMETER);
             }
+        } else if (arg == L"--all-users") {
+            options.all_users = true;
+        } else if (arg == L"--user") {
+            if (i + 1 < args.size()) {
+                options.user_filter = args[++i];
+            } else {
+                Logger::error(L"Missing user name or SID argument for --user");
+                return Win32Error::from_code(ERROR_INVALID_PARAMETER);
+            }
+        } else if (arg == L"--include-system-profiles") {
+            options.include_system_profiles = true;
         } else if (arg == L"--install-menu") {
             options.install_menu = true;
         } else if (arg == L"--uninstall-menu") {
