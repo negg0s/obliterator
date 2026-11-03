@@ -1,5 +1,6 @@
 #include "obliterator/confidence_config.hpp"
 #include "obliterator/confidence_engine.hpp"
+#include "obliterator/profile.hpp"
 #include "obliterator/error.hpp"
 #include "obliterator/handles.hpp"
 #include "obliterator/leftovers.hpp"
@@ -1105,6 +1106,106 @@ static void test_confidence_engine_scenarios() {
     }
 }
 
+static void test_profile_hive_loading_and_sharing_violation() {
+    namespace fs = std::filesystem;
+    const fs::path sandbox = L"D:\\Projects\\obliterator\\build\\test_fake_hive";
+    fs::create_directories(sandbox);
+    const fs::path hive_file = sandbox / L"fake_hive.dat";
+    if (fs::exists(hive_file)) {
+        fs::remove(hive_file);
+    }
+
+    // Verify service SID detection
+    check(ProfileManager::is_service_sid(L"S-1-5-18"), "S-1-5-18 is service SID");
+    check(ProfileManager::is_service_sid(L"S-1-5-19"), "S-1-5-19 is service SID");
+    check(ProfileManager::is_service_sid(L"S-1-5-20"), "S-1-5-20 is service SID");
+    check(!ProfileManager::is_service_sid(L"S-1-5-21-123456789-123456789-123456789-1001"), "User SID is not service SID");
+
+    std::wstring cur_sid = ProfileManager::get_current_user_sid();
+    check(!cur_sid.empty(), "Retrieved current user SID");
+
+    auto profiles = ProfileManager::enumerate_profiles(false);
+    check(!profiles.empty(), "Enumerated user profiles");
+
+    enable_privilege(L"SeBackupPrivilege");
+    enable_privilege(L"SeRestorePrivilege");
+
+    UniqueHKey hTest;
+    LSTATUS st = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\ObliteratorFakeHiveTest", 0, nullptr,
+                                 REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, nullptr, hTest.put(), nullptr);
+    check(st == ERROR_SUCCESS, "Created test key under HKCU");
+
+    const wchar_t test_val[] = L"ObliteratorHiveData";
+    RegSetValueExW(hTest.get(), L"TestVal", 0, REG_SZ,
+                   reinterpret_cast<const BYTE*>(test_val), sizeof(test_val));
+
+    // Save key to hive file
+    st = RegSaveKeyW(hTest.get(), hive_file.wstring().c_str(), nullptr);
+    hTest.reset();
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\ObliteratorFakeHiveTest");
+
+    if (st == ERROR_PRIVILEGE_NOT_HELD || st == ERROR_ACCESS_DENIED) {
+        fs::remove_all(sandbox);
+        return;
+    }
+
+    check(st == ERROR_SUCCESS, "Saved fake hive to file");
+    check(fs::exists(hive_file), "Fake hive file created on disk");
+
+    // 1. Test normal load, access, and unload
+    {
+        LoadedHiveGuard guard(HKEY_USERS, L"obliterator_fake_test", hive_file.wstring());
+        auto load_res = guard.load();
+        if (load_res) {
+            check(guard.is_loaded(), "guard indicates loaded");
+
+            UniqueHKey hLoaded;
+            st = RegOpenKeyExW(HKEY_USERS, L"obliterator_fake_test", 0, KEY_READ, hLoaded.put());
+            check(st == ERROR_SUCCESS, "Opened loaded hive key under HKEY_USERS");
+
+            wchar_t query_val[64]{};
+            DWORD query_bytes = sizeof(query_val);
+            st = RegQueryValueExW(hLoaded.get(), L"TestVal", nullptr, nullptr,
+                                  reinterpret_cast<LPBYTE>(query_val), &query_bytes);
+            check(st == ERROR_SUCCESS, "Queried value from loaded hive");
+            check(std::wstring(query_val) == L"ObliteratorHiveData", "Hive data value matches");
+
+            hLoaded.reset(); // Close handle before unloading
+
+            auto unload_res = guard.unload();
+            check(unload_res.has_value(), "Hive unloaded successfully");
+            check(!guard.is_loaded(), "guard indicates not loaded");
+
+            st = RegOpenKeyExW(HKEY_USERS, L"obliterator_fake_test", 0, KEY_READ, hLoaded.put());
+            check(st != ERROR_SUCCESS, "Unloaded key no longer accessible");
+        }
+    }
+
+    // 2. Test ERROR_SHARING_VIOLATION when profile file is locked by another session
+    {
+        UniqueHandle hLock(CreateFileW(
+            hive_file.wstring().c_str(),
+            GENERIC_READ | GENERIC_WRITE,
+            0, // Exclusive lock: no sharing
+            nullptr,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr
+        ));
+        check(hLock.is_valid(), "Acquired exclusive lock on hive file to simulate active session");
+
+        LoadedHiveGuard guard_locked(HKEY_USERS, L"obliterator_fake_test", hive_file.wstring());
+        auto locked_res = guard_locked.load();
+        check(!locked_res.has_value(), "Loading locked hive fails");
+        check(locked_res.error().code() == ERROR_SHARING_VIOLATION, "Fails specifically with ERROR_SHARING_VIOLATION");
+        check(!guard_locked.is_loaded(), "Locked guard is not loaded");
+
+        hLock.reset();
+    }
+
+    fs::remove_all(sandbox);
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -1166,6 +1267,8 @@ int main() {
     test_uninstall_string_parsing();
     std::wcout << L"[RUN] test_confidence_engine_scenarios\n" << std::flush;
     test_confidence_engine_scenarios();
+    std::wcout << L"[RUN] test_profile_hive_loading_and_sharing_violation\n" << std::flush;
+    test_profile_hive_loading_and_sharing_violation();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;
