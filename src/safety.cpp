@@ -1,5 +1,6 @@
 #include "obliterator/safety.hpp"
 #include "obliterator/log.hpp"
+#include "obliterator/path.hpp"
 
 #include <algorithm>
 #include <cwctype>
@@ -7,14 +8,6 @@
 #include <vector>
 
 namespace obliterator {
-
-static std::wstring to_lower_string(std::wstring_view input) {
-    std::wstring result(input);
-    std::transform(result.begin(), result.end(), result.begin(), [](wchar_t c) {
-        return static_cast<wchar_t>(std::towlower(c));
-    });
-    return result;
-}
 
 static std::wstring query_environment(const wchar_t* name) {
     const DWORD needed = GetEnvironmentVariableW(name, nullptr, 0);
@@ -170,7 +163,6 @@ Result<void> SafetyValidator::validate_path(const std::wstring& raw_path) {
         return Win32Error::from_code(ERROR_ACCESS_DENIED);
     }
 
-    const std::wstring lower_target = to_lower_string(normalized);
     const auto protected_list = get_protected_paths();
 
     for (const auto& item : protected_list) {
@@ -178,18 +170,16 @@ Result<void> SafetyValidator::validate_path(const std::wstring& raw_path) {
             continue;
         }
 
-        const std::wstring lower_protected = to_lower_string(item.path);
-
         // Direct exact match
-        if (lower_target == lower_protected) {
+        if (PathHelper::is_same_or_subpath(item.path, normalized) &&
+            PathHelper::is_same_or_subpath(normalized, item.path)) {
             Logger::error(L"Safety check failed: target matches protected " +
                           item.description + L": " + normalized);
             return Win32Error::from_code(ERROR_ACCESS_DENIED);
         }
 
         // Target is an ancestor of a protected path (e.g. C:\ containing C:\Windows)
-        const std::wstring target_prefix = lower_target + L"\\";
-        if (lower_protected.starts_with(target_prefix)) {
+        if (PathHelper::is_same_or_subpath(normalized, item.path)) {
             Logger::error(L"Safety check failed: target is parent of protected " +
                           item.description + L": " + normalized);
             return Win32Error::from_code(ERROR_ACCESS_DENIED);
@@ -197,8 +187,7 @@ Result<void> SafetyValidator::validate_path(const std::wstring& raw_path) {
 
         // Target is inside the Windows directory (system files)
         if (item.description == L"Windows directory") {
-            const std::wstring win_prefix = lower_protected + L"\\";
-            if (lower_target.starts_with(win_prefix)) {
+            if (PathHelper::is_same_or_subpath(item.path, normalized)) {
                 Logger::error(L"Safety check failed: target is inside Windows directory: " +
                               normalized);
                 return Win32Error::from_code(ERROR_ACCESS_DENIED);
@@ -207,8 +196,7 @@ Result<void> SafetyValidator::validate_path(const std::wstring& raw_path) {
 
         // Target is obliterator's directory or contains obliterator
         if (item.description == L"Obliterator self directory") {
-            const std::wstring self_prefix = lower_protected + L"\\";
-            if (lower_target.starts_with(self_prefix)) {
+            if (PathHelper::is_same_or_subpath(item.path, normalized)) {
                 Logger::error(L"Safety check failed: target contains obliterator binary: " +
                               normalized);
                 return Win32Error::from_code(ERROR_ACCESS_DENIED);

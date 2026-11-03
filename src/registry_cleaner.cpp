@@ -1,5 +1,6 @@
 #include "obliterator/registry_cleaner.hpp"
 #include "obliterator/log.hpp"
+#include "obliterator/path.hpp"
 #include "obliterator/safety.hpp"
 
 #include <algorithm>
@@ -20,13 +21,6 @@ static std::wstring to_lower(std::wstring_view input) {
         return static_cast<wchar_t>(std::towlower(c));
     });
     return result;
-}
-
-static bool contains_ignore_case(std::wstring_view text, std::wstring_view pattern) {
-    if (pattern.empty()) {
-        return false;
-    }
-    return to_lower(text).find(to_lower(pattern)) != std::wstring_view::npos;
 }
 
 static std::wstring sanitize_filename(std::wstring_view input) {
@@ -295,7 +289,7 @@ Result<std::wstring> RegistryBackup::export_key(HKEY root, const std::wstring& s
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
 
-        if (exit_code == 0 && std::filesystem::exists(file_path)) {
+        if (exit_code == 0 && std::filesystem::exists(file_path, ec) && !ec) {
             return file_path;
         }
     }
@@ -511,7 +505,7 @@ std::vector<AutorunEntry> RegistryCleaner::find_autorun_entries(const std::wstri
             }
 
             const std::wstring cmd = query_reg_string(key.get(), val_name);
-            if (contains_ignore_case(cmd, target_root)) {
+            if (PathHelper::contains_path_reference(cmd, target_root)) {
                 entries.push_back({s.root, s.path, val_name, cmd, s.sam});
             }
         }
@@ -562,7 +556,7 @@ std::vector<ShellVerbEntry> RegistryCleaner::find_shell_entries(const std::wstri
             UniqueHKey cmd_key;
             if (RegOpenKeyExW(HKEY_CLASSES_ROOT, cmd_sub.c_str(), 0, KEY_READ, cmd_key.put()) == ERROR_SUCCESS) {
                 const std::wstring cmd = query_reg_string(cmd_key.get(), nullptr);
-                if (contains_ignore_case(cmd, target_root)) {
+                if (PathHelper::contains_path_reference(cmd, target_root)) {
                     entries.push_back({HKEY_CLASSES_ROOT, verb_sub, cmd, false});
                 }
             }
@@ -610,7 +604,7 @@ std::vector<ShellVerbEntry> RegistryCleaner::find_shell_entries(const std::wstri
                 UniqueHKey inproc_key;
                 if (RegOpenKeyExW(HKEY_CLASSES_ROOT, inproc_sub.c_str(), 0, KEY_READ, inproc_key.put()) == ERROR_SUCCESS) {
                     const std::wstring dll_path = query_reg_string(inproc_key.get(), nullptr);
-                    if (contains_ignore_case(dll_path, target_root)) {
+                    if (PathHelper::contains_path_reference(dll_path, target_root)) {
                         entries.push_back({HKEY_CLASSES_ROOT, handler_path, dll_path, false});
                         entries.push_back({HKEY_CLASSES_ROOT, clsid_sub, dll_path, true});
                     }
@@ -657,7 +651,7 @@ static bool key_references_path_recursive(HKEY hKey, const std::wstring& target_
         }
 
         const std::wstring val_data = query_reg_string(hKey, val_name);
-        if (contains_ignore_case(val_data, target_root)) {
+        if (PathHelper::contains_path_reference(val_data, target_root)) {
             return true;
         }
     }

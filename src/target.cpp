@@ -1,5 +1,6 @@
 #include "obliterator/target.hpp"
 #include "obliterator/log.hpp"
+#include "obliterator/path.hpp"
 #include "obliterator/safety.hpp"
 
 #include <algorithm>
@@ -119,8 +120,9 @@ std::wstring TargetResolver::deduce_install_folder(const std::wstring& install_l
         const std::wstring raw_path = strip_icon_index(display_icon);
         const std::wstring norm = SafetyValidator::normalize_path(raw_path);
         if (!norm.empty()) {
+            std::error_code ec;
             std::filesystem::path p(norm);
-            if (std::filesystem::exists(p) && !std::filesystem::is_directory(p)) {
+            if (std::filesystem::exists(p, ec) && !ec && !std::filesystem::is_directory(p, ec) && !ec) {
                 std::filesystem::path parent = p.parent_path();
                 const std::wstring parent_name = to_lower_string(parent.filename().wstring());
                 if ((parent_name == L"bin" || parent_name == L"app" || parent_name == L"x64") &&
@@ -220,7 +222,8 @@ static std::vector<TargetRegistryEntry> find_registry_entries_for_path(const std
 
             const std::wstring deduced =
                 TargetResolver::deduce_install_folder(install_loc, display_icon, uninstall_str);
-            if (!deduced.empty() && to_lower_string(deduced) == lower_target) {
+            if (!deduced.empty() && (PathHelper::is_same_or_subpath(target_path, deduced) ||
+                                     PathHelper::is_same_or_subpath(deduced, target_path))) {
                 entries.push_back({
                     scope.root,
                     std::wstring(kUninstallPath) + L"\\" + subkey_name,
@@ -250,8 +253,9 @@ Result<Target> TargetResolver::resolve(const std::wstring& input) {
             return safe_res.error();
         }
 
+        std::error_code ec;
         std::filesystem::path p(norm);
-        if (!std::filesystem::exists(p)) {
+        if (!std::filesystem::exists(p, ec) || ec) {
             Logger::error(L"Target path does not exist on disk: " + norm);
             return Win32Error::from_code(ERROR_FILE_NOT_FOUND);
         }
@@ -341,7 +345,8 @@ Result<Target> TargetResolver::resolve(const std::wstring& input) {
             // Deduplicate across registry scopes
             bool duplicate = false;
             for (const auto& existing : candidates) {
-                if (to_lower_string(existing.root_path) == to_lower_string(deduced)) {
+                if (PathHelper::is_same_or_subpath(existing.root_path, deduced) &&
+                    PathHelper::is_same_or_subpath(deduced, existing.root_path)) {
                     duplicate = true;
                     break;
                 }

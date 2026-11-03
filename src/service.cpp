@@ -1,6 +1,7 @@
 #include "obliterator/service.hpp"
 #include "obliterator/handles.hpp"
 #include "obliterator/log.hpp"
+#include "obliterator/path.hpp"
 #include "obliterator/safety.hpp"
 
 #include <comdef.h>
@@ -15,14 +16,6 @@
 
 namespace obliterator {
 
-static std::wstring to_lower_string(std::wstring_view input) {
-    std::wstring result(input);
-    std::transform(result.begin(), result.end(), result.begin(), [](wchar_t c) {
-        return static_cast<wchar_t>(std::towlower(c));
-    });
-    return result;
-}
-
 class ScopedCom {
 public:
     ScopedCom() noexcept : m_hr(CoInitializeEx(nullptr, COINIT_MULTITHREADED)) {}
@@ -36,49 +29,6 @@ public:
     [[nodiscard]] bool ok() const noexcept { return SUCCEEDED(m_hr); }
 private:
     HRESULT m_hr;
-};
-
-template <typename T>
-class ComPtr {
-public:
-    constexpr ComPtr() noexcept : m_ptr(nullptr) {}
-    explicit ComPtr(T* ptr) noexcept : m_ptr(ptr) {}
-    ~ComPtr() noexcept { reset(); }
-
-    ComPtr(const ComPtr&) = delete;
-    ComPtr& operator=(const ComPtr&) = delete;
-
-    ComPtr(ComPtr&& other) noexcept : m_ptr(other.m_ptr) { other.m_ptr = nullptr; }
-    ComPtr& operator=(ComPtr&& other) noexcept {
-        if (this != &other) {
-            reset();
-            m_ptr = other.m_ptr;
-            other.m_ptr = nullptr;
-        }
-        return *this;
-    }
-
-    void reset() noexcept {
-        if (m_ptr != nullptr) {
-            m_ptr->Release();
-            m_ptr = nullptr;
-        }
-    }
-
-    [[nodiscard]] T* get() const noexcept { return m_ptr; }
-    [[nodiscard]] T* operator->() const noexcept { return m_ptr; }
-    [[nodiscard]] explicit operator bool() const noexcept { return m_ptr != nullptr; }
-    [[nodiscard]] T** put() noexcept {
-        reset();
-        return &m_ptr;
-    }
-    [[nodiscard]] void** put_void() noexcept {
-        reset();
-        return reinterpret_cast<void**>(&m_ptr);
-    }
-
-private:
-    T* m_ptr;
 };
 
 std::wstring ServiceManager::normalize_service_image_path(std::wstring_view raw_path) {
@@ -100,7 +50,7 @@ std::wstring ServiceManager::normalize_service_image_path(std::wstring_view raw_
     }
 
     // Replace NT SystemRoot with environment variable prefix
-    if (to_lower_string(path).starts_with(L"\\systemroot\\")) {
+    if (PathHelper::to_lower_unicode(path).starts_with(L"\\systemroot\\")) {
         path = L"%SystemRoot%\\" + path.substr(12);
     }
 
@@ -113,14 +63,27 @@ std::wstring ServiceManager::normalize_service_image_path(std::wstring_view raw_
             path.erase(0, 1);
         }
     } else {
-        const std::wstring lower = to_lower_string(path);
-        const size_t exe_pos = lower.find(L".exe");
-        const size_t sys_pos = lower.find(L".sys");
+        const std::wstring lower = PathHelper::to_lower_unicode(path);
         size_t cutoff = std::wstring::npos;
+        auto find_ext_boundary = [&](std::wstring_view ext) -> size_t {
+            size_t pos = 0;
+            while ((pos = lower.find(ext, pos)) != std::wstring::npos) {
+                const size_t end = pos + ext.size();
+                if (end == lower.size() || lower[end] == L' ' || lower[end] == L'\t' || lower[end] == L'\"') {
+                    return end;
+                }
+                pos = end;
+            }
+            return std::wstring::npos;
+        };
+
+        const size_t exe_pos = find_ext_boundary(L".exe");
+        const size_t sys_pos = find_ext_boundary(L".sys");
+
         if (exe_pos != std::wstring::npos) {
-            cutoff = exe_pos + 4;
+            cutoff = exe_pos;
         } else if (sys_pos != std::wstring::npos) {
-            cutoff = sys_pos + 4;
+            cutoff = sys_pos;
         } else {
             const size_t space = path.find(L' ');
             if (space != std::wstring::npos) {
@@ -204,10 +167,6 @@ std::vector<ServiceInfo> ServiceManager::find_target_services(const std::wstring
         return results;
     }
 
-    const std::wstring norm_target = SafetyValidator::normalize_path(target_root_path);
-    const std::wstring lower_target = to_lower_string(norm_target);
-    const std::wstring target_prefix = lower_target + L"\\";
-
     UniqueScHandle scm(OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE));
     if (!scm) {
         return results;
@@ -233,10 +192,7 @@ std::vector<ServiceInfo> ServiceManager::find_target_services(const std::wstring
         }
 
         const std::wstring norm_binary = normalize_service_image_path(raw_binary);
-        const std::wstring lower_binary = to_lower_string(norm_binary);
-
-        if (!lower_binary.empty() &&
-            (lower_binary == lower_target || lower_binary.starts_with(target_prefix))) {
+        if (PathHelper::is_same_or_subpath(target_root_path, norm_binary)) {
             // Refuse to touch services located in protected Windows directories
             if (!SafetyValidator::validate_path(norm_binary)) {
                 continue;
@@ -258,8 +214,7 @@ std::vector<ServiceInfo> ServiceManager::find_target_services(const std::wstring
     return results;
 }
 
-static void process_task_folder(ITaskFolder* folder, const std::wstring& target_prefix,
-                                const std::wstring& lower_target,
+static void process_task_folder(ITaskFolder* folder, const std::wstring& target_root_path,
                                 std::vector<ScheduledTaskInfo>& found_tasks,
                                 bool delete_tasks, size_t& deleted_count) {
     if (folder == nullptr) {
@@ -315,10 +270,7 @@ static void process_task_folder(ITaskFolder* folder, const std::wstring& target_
                         SysFreeString(bstr_path);
 
                         const std::wstring norm_exec = SafetyValidator::normalize_path(exec_path);
-                        const std::wstring lower_exec = to_lower_string(norm_exec);
-
-                        if (!lower_exec.empty() &&
-                            (lower_exec == lower_target || lower_exec.starts_with(target_prefix))) {
+                        if (PathHelper::is_same_or_subpath(target_root_path, norm_exec)) {
                             matched = true;
                             matched_path = norm_exec;
                             break;
@@ -352,7 +304,7 @@ static void process_task_folder(ITaskFolder* folder, const std::wstring& target_
         for (LONG f = 1; f <= folder_count; ++f) {
             ComPtr<ITaskFolder> sub;
             if (SUCCEEDED(subfolders->get_Item(_variant_t(f), sub.put())) && sub) {
-                process_task_folder(sub.get(), target_prefix, lower_target,
+                process_task_folder(sub.get(), target_root_path,
                                     found_tasks, delete_tasks, deleted_count);
             }
         }
@@ -370,10 +322,6 @@ std::vector<ScheduledTaskInfo> ServiceManager::find_target_tasks(const std::wstr
         return results;
     }
 
-    const std::wstring norm_target = SafetyValidator::normalize_path(target_root_path);
-    const std::wstring lower_target = to_lower_string(norm_target);
-    const std::wstring target_prefix = lower_target + L"\\";
-
     ComPtr<ITaskService> task_service;
     if (FAILED(CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER,
                                 IID_ITaskService, task_service.put_void())) || !task_service) {
@@ -390,7 +338,7 @@ std::vector<ScheduledTaskInfo> ServiceManager::find_target_tasks(const std::wstr
     }
 
     size_t ignored = 0;
-    process_task_folder(root_folder.get(), target_prefix, lower_target, results, false, ignored);
+    process_task_folder(root_folder.get(), target_root_path, results, false, ignored);
     return results;
 }
 
@@ -530,10 +478,6 @@ ServiceReport ServiceManager::remove_services_and_tasks(const std::wstring& targ
     // Delete scheduled tasks
     ScopedCom com;
     if (com.ok()) {
-        const std::wstring norm_target = SafetyValidator::normalize_path(target_root_path);
-        const std::wstring lower_target = to_lower_string(norm_target);
-        const std::wstring target_prefix = lower_target + L"\\";
-
         ComPtr<ITaskService> task_service;
         if (SUCCEEDED(CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER,
                                        IID_ITaskService, task_service.put_void())) && task_service) {
@@ -541,7 +485,7 @@ ServiceReport ServiceManager::remove_services_and_tasks(const std::wstring& targ
                 ComPtr<ITaskFolder> root_folder;
                 if (SUCCEEDED(task_service->GetFolder(_bstr_t(L"\\"), root_folder.put())) && root_folder) {
                     std::vector<ScheduledTaskInfo> tasks;
-                    process_task_folder(root_folder.get(), target_prefix, lower_target,
+                    process_task_folder(root_folder.get(), target_root_path,
                                         tasks, true, report.tasks_deleted);
                     report.tasks_found = tasks.size();
                 }

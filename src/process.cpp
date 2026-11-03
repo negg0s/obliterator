@@ -1,6 +1,7 @@
 #include "obliterator/process.hpp"
 #include "obliterator/handles.hpp"
 #include "obliterator/log.hpp"
+#include "obliterator/path.hpp"
 #include "obliterator/safety.hpp"
 
 #include <tlhelp32.h>
@@ -103,7 +104,7 @@ bool ProcessManager::is_system_process(const std::wstring& image_path) {
     return false;
 }
 
-static bool process_has_module_in_path(DWORD pid, const std::wstring& target_prefix) {
+static bool process_has_module_in_path(DWORD pid, const std::wstring& target_root_path) {
     UniqueHandle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid));
     if (!snapshot) {
         return false;
@@ -117,7 +118,7 @@ static bool process_has_module_in_path(DWORD pid, const std::wstring& target_pre
 
     do {
         const std::wstring mod_path = SafetyValidator::normalize_path(me.szExePath);
-        if (to_lower_string(mod_path).starts_with(target_prefix)) {
+        if (PathHelper::is_same_or_subpath(target_root_path, mod_path)) {
             return true;
         }
     } while (Module32NextW(snapshot.get(), &me));
@@ -130,10 +131,6 @@ std::vector<ProcessInfo> ProcessManager::find_target_processes(const std::wstrin
     if (target_root_path.empty()) {
         return results;
     }
-
-    const std::wstring norm_target = SafetyValidator::normalize_path(target_root_path);
-    const std::wstring lower_target = to_lower_string(norm_target);
-    const std::wstring target_prefix = lower_target + L"\\";
 
     UniqueHandle snap(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
     if (!snap) {
@@ -194,14 +191,12 @@ std::vector<ProcessInfo> ProcessManager::find_target_processes(const std::wstrin
             continue;
         }
 
-        const std::wstring lower_image = to_lower_string(image_path);
         bool is_match = false;
         bool by_module = false;
 
-        if (!lower_image.empty() &&
-            (lower_image == lower_target || lower_image.starts_with(target_prefix))) {
+        if (PathHelper::is_same_or_subpath(target_root_path, image_path)) {
             is_match = true;
-        } else if (process_has_module_in_path(item.pid, target_prefix)) {
+        } else if (process_has_module_in_path(item.pid, target_root_path)) {
             is_match = true;
             by_module = true;
         }
