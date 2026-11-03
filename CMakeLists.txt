@@ -36,6 +36,10 @@ add_library(obliterator_core STATIC
     include/obliterator/pending_rename.hpp
     include/obliterator/resume.hpp
     include/obliterator/safe_mode.hpp
+    include/obliterator/restore_point.hpp
+    include/obliterator/crypto.hpp
+    include/obliterator/audit.hpp
+    include/obliterator/quarantine.hpp
     include/obliterator/wiper.hpp
     src/cli.cpp
     src/confidence_engine.cpp
@@ -54,6 +58,10 @@ add_library(obliterator_core STATIC
     src/report.cpp
     src/resume.cpp
     src/safe_mode.cpp
+    src/restore_point.cpp
+    src/crypto.cpp
+    src/audit.cpp
+    src/quarantine.cpp
     src/safety.cpp
     src/service.cpp
     src/target.cpp
@@ -70,6 +78,7 @@ target_include_directories(obliterator_core PUBLIC
 
 target_link_libraries(obliterator_core PUBLIC
     advapi32
+    bcrypt
     ntdll
     rstrtmgr
     taskschd
