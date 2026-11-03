@@ -1,6 +1,7 @@
 #include "obliterator/unlocker.hpp"
 #include "obliterator/handles.hpp"
 #include "obliterator/log.hpp"
+#include "obliterator/path.hpp"
 #include "obliterator/process.hpp"
 #include "obliterator/safety.hpp"
 
@@ -106,10 +107,15 @@ static std::wstring query_handle_path_with_timeout(HANDLE handle, std::chrono::m
     auto holder = std::make_shared<ResultHolder>();
 
     std::thread worker([handle, holder]() {
-        wchar_t path_buf[MAX_PATH];
-        DWORD len = GetFinalPathNameByHandleW(handle, path_buf, MAX_PATH, FILE_NAME_NORMALIZED);
-        if (len > 0 && len < MAX_PATH) {
-            holder->path.assign(path_buf, len);
+        std::wstring buf(MAX_PATH, L'\0');
+        DWORD len = GetFinalPathNameByHandleW(handle, buf.data(), static_cast<DWORD>(buf.size()), FILE_NAME_NORMALIZED);
+        if (len >= buf.size()) {
+            buf.resize(static_cast<size_t>(len) + 1);
+            len = GetFinalPathNameByHandleW(handle, buf.data(), static_cast<DWORD>(buf.size()), FILE_NAME_NORMALIZED);
+        }
+        if (len > 0 && len < buf.size()) {
+            buf.resize(len);
+            holder->path = std::move(buf);
         }
         holder->done.store(true, std::memory_order_release);
     });
@@ -274,16 +280,7 @@ UnlockReport FileUnlocker::release_locks(const std::wstring& target_root_path,
     const auto* handle_info = reinterpret_cast<const SYSTEM_HANDLE_INFORMATION_EX*>(buffer.data());
     const ULONG_PTR handle_count = handle_info->NumberOfHandles;
 
-    std::unordered_map<DWORD, HANDLE> proc_cache;
-
-    auto cleanup_proc_cache = [&proc_cache]() {
-        for (auto& [_, h] : proc_cache) {
-            if (h != nullptr && h != INVALID_HANDLE_VALUE) {
-                CloseHandle(h);
-            }
-        }
-        proc_cache.clear();
-    };
+    std::unordered_map<DWORD, UniqueHandle> proc_cache;
 
     for (ULONG_PTR i = 0; i < handle_count; ++i) {
         const auto& entry = handle_info->Handles[i];
@@ -296,10 +293,11 @@ UnlockReport FileUnlocker::release_locks(const std::wstring& target_root_path,
         HANDLE hProc = nullptr;
         auto it = proc_cache.find(pid);
         if (it != proc_cache.end()) {
-            hProc = it->second;
+            hProc = it->second.get();
         } else {
-            hProc = OpenProcess(PROCESS_DUP_HANDLE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-            proc_cache[pid] = hProc;
+            UniqueHandle opened(OpenProcess(PROCESS_DUP_HANDLE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
+            hProc = opened.get();
+            proc_cache[pid] = std::move(opened);
         }
 
         if (hProc == nullptr || hProc == INVALID_HANDLE_VALUE) {
@@ -325,9 +323,7 @@ UnlockReport FileUnlocker::release_locks(const std::wstring& target_root_path,
         }
 
         const std::wstring norm_path = SafetyValidator::normalize_path(raw_path);
-        const std::wstring lower_path = to_lower_string(norm_path);
-
-        if (lower_path == lower_target || lower_path.starts_with(target_prefix)) {
+        if (PathHelper::is_same_or_subpath(target_root_path, norm_path)) {
             // Close the handle inside the remote process
             if (DuplicateHandle(hProc, reinterpret_cast<HANDLE>(entry.HandleValue),
                                 GetCurrentProcess(), nullptr, 0, FALSE, DUPLICATE_CLOSE_SOURCE)) {
@@ -337,7 +333,6 @@ UnlockReport FileUnlocker::release_locks(const std::wstring& target_root_path,
         }
     }
 
-    cleanup_proc_cache();
     return report;
 }
 

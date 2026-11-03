@@ -196,4 +196,111 @@ private:
     SC_HANDLE m_handle;
 };
 
+// RAII wrapper for FindFirstFile / FindNextFile handles.
+// These handles MUST be closed with FindClose, never CloseHandle.
+class UniqueFindHandle {
+public:
+    constexpr UniqueFindHandle() noexcept : m_handle(INVALID_HANDLE_VALUE) {}
+
+    explicit UniqueFindHandle(HANDLE h) noexcept : m_handle(h) {}
+
+    ~UniqueFindHandle() noexcept {
+        reset();
+    }
+
+    UniqueFindHandle(const UniqueFindHandle&) = delete;
+    UniqueFindHandle& operator=(const UniqueFindHandle&) = delete;
+
+    UniqueFindHandle(UniqueFindHandle&& other) noexcept : m_handle(other.m_handle) {
+        other.m_handle = INVALID_HANDLE_VALUE;
+    }
+
+    UniqueFindHandle& operator=(UniqueFindHandle&& other) noexcept {
+        if (this != &other) {
+            reset();
+            m_handle = other.m_handle;
+            other.m_handle = INVALID_HANDLE_VALUE;
+        }
+        return *this;
+    }
+
+    [[nodiscard]] bool is_valid() const noexcept {
+        return m_handle != nullptr && m_handle != INVALID_HANDLE_VALUE;
+    }
+
+    [[nodiscard]] explicit operator bool() const noexcept {
+        return is_valid();
+    }
+
+    [[nodiscard]] HANDLE get() const noexcept {
+        return m_handle;
+    }
+
+    [[nodiscard]] HANDLE release() noexcept {
+        HANDLE h = m_handle;
+        m_handle = INVALID_HANDLE_VALUE;
+        return h;
+    }
+
+    void reset(HANDLE h = INVALID_HANDLE_VALUE) noexcept {
+        if (m_handle != h) {
+            if (is_valid()) {
+                FindClose(m_handle);
+            }
+            m_handle = h;
+        }
+    }
+
+    [[nodiscard]] HANDLE* put() noexcept {
+        reset();
+        return &m_handle;
+    }
+
+private:
+    HANDLE m_handle;
+};
+
+template <typename T>
+class ComPtr {
+public:
+    constexpr ComPtr() noexcept : m_ptr(nullptr) {}
+    explicit ComPtr(T* ptr) noexcept : m_ptr(ptr) {}
+    ~ComPtr() noexcept { reset(); }
+
+    ComPtr(const ComPtr&) = delete;
+    ComPtr& operator=(const ComPtr&) = delete;
+
+    ComPtr(ComPtr&& other) noexcept : m_ptr(other.m_ptr) { other.m_ptr = nullptr; }
+    ComPtr& operator=(ComPtr&& other) noexcept {
+        if (this != &other) {
+            reset();
+            m_ptr = other.m_ptr;
+            other.m_ptr = nullptr;
+        }
+        return *this;
+    }
+
+    void reset() noexcept {
+        if (m_ptr != nullptr) {
+            m_ptr->Release();
+            m_ptr = nullptr;
+        }
+    }
+
+    [[nodiscard]] T* get() const noexcept { return m_ptr; }
+    [[nodiscard]] T* operator->() const noexcept { return m_ptr; }
+    [[nodiscard]] explicit operator bool() const noexcept { return m_ptr != nullptr; }
+    [[nodiscard]] T** put() noexcept {
+        reset();
+        return &m_ptr;
+    }
+    [[nodiscard]] void** put_void() noexcept {
+        reset();
+        return reinterpret_cast<void**>(&m_ptr);
+    }
+
+private:
+    T* m_ptr;
+};
+
 } // namespace obliterator

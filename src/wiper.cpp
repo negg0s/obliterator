@@ -246,7 +246,7 @@ Result<void> FileWiper::wipe_physical_tree(const std::wstring& target_root,
             const std::wstring ext_curr = ensure_extended_path(curr);
             const std::wstring pattern = ext_curr + L"\\*";
             WIN32_FIND_DATAW fd{};
-            UniqueHandle find_h(FindFirstFileExW(
+            UniqueFindHandle find_h(FindFirstFileExW(
                 pattern.c_str(),
                 FindExInfoBasic,
                 &fd,
@@ -382,8 +382,12 @@ Result<void> FileWiper::wipe_physical_tree(const std::wstring& target_root,
         }
     }
 
-    for (auto it = all_dirs.rbegin(); it != all_dirs.rend(); ++it) {
-        const auto& dir = *it;
+    // Sort directories deepest first so child directories are removed before parents
+    std::sort(all_dirs.begin(), all_dirs.end(), [](const DirEntry& a, const DirEntry& b) {
+        return a.path.size() > b.path.size();
+    });
+
+    for (const auto& dir : all_dirs) {
         const std::wstring ext = ensure_extended_path(dir.path);
 
         strip_file_attributes(ext);
