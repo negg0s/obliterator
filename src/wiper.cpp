@@ -1,6 +1,7 @@
 #include "obliterator/wiper.hpp"
 #include "obliterator/handles.hpp"
 #include "obliterator/log.hpp"
+#include "obliterator/pending_rename.hpp"
 #include "obliterator/safety.hpp"
 
 #include <aclapi.h>
@@ -504,6 +505,7 @@ Result<void> FileWiper::wipe_physical_tree(const std::wstring& target_root,
             }
         }
 
+        std::vector<std::wstring> reboot_files;
         for (const auto& s : thread_stats) {
             report.files_deleted += s.files_deleted;
             report.junctions_deleted += s.junctions_deleted;
@@ -515,7 +517,11 @@ Result<void> FileWiper::wipe_physical_tree(const std::wstring& target_root,
             }
             for (const auto& fail : s.failed_paths) {
                 report.failed_paths.push_back(fail);
+                reboot_files.push_back(fail);
             }
+        }
+        if (!reboot_files.empty()) {
+            PendingRenameManager::schedule_deletions(reboot_files);
         }
     }
 
@@ -523,6 +529,7 @@ Result<void> FileWiper::wipe_physical_tree(const std::wstring& target_root,
         return a.path.size() > b.path.size();
     });
 
+    std::vector<std::wstring> reboot_dirs;
     for (const auto& dir : all_dirs) {
         const std::wstring ext = ensure_extended_path(dir.path);
         DWORD err = 0;
@@ -537,9 +544,15 @@ Result<void> FileWiper::wipe_physical_tree(const std::wstring& target_root,
         if (MoveFileExW(ext.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT)) {
             report.directories_scheduled_for_reboot++;
             report.reboot_required = true;
+            reboot_dirs.push_back(dir.path);
         } else {
             report.failed_paths.push_back(dir.path);
+            reboot_dirs.push_back(dir.path);
         }
+    }
+
+    if (!reboot_dirs.empty()) {
+        PendingRenameManager::schedule_deletions(reboot_dirs);
     }
 
     report.deletion_ms = del_timer.elapsed_ms();
