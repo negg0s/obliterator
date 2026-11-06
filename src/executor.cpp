@@ -17,6 +17,7 @@
 #include "obliterator/uninstaller.hpp"
 #include "obliterator/unlocker.hpp"
 #include "obliterator/uwp.hpp"
+#include "obliterator/volume.hpp"
 #include "obliterator/wiper.hpp"
 
 #include <chrono>
@@ -60,6 +61,8 @@ FinalReport execute_obliteration(
     FinalReport final_report;
     final_report.target_name = target.name;
     final_report.target_root = target.root_path;
+
+    const auto volume_snapshots = VolumeManager::snapshot_volumes();
 
     std::vector<UserProfileInfo> target_profiles;
     if (options.all_users || !options.user_filter.empty()) {
@@ -354,7 +357,7 @@ FinalReport execute_obliteration(
 
     if (options.quarantine) {
         emit_log(L"Phase 6: Quarantining target files...");
-        auto q_res = QuarantineManager::quarantine_target(target);
+        auto q_res = QuarantineManager::quarantine_target(target, options.quarantine_dir);
         if (!q_res) {
             emit_log(L"Quarantine failed: " + q_res.error().message());
             wipe_res = q_res.error();
@@ -512,6 +515,8 @@ FinalReport execute_obliteration(
     if (restore_pt_seq > 0) {
         RestorePointManager::finish_restore_point(restore_pt_seq, !final_report.success);
     }
+
+    final_report.volume_deltas = VolumeManager::compute_deltas(volume_snapshots);
 
     emit_log(L"Operation finished with exit code: " + std::to_wstring(final_report.exit_code));
     return final_report;

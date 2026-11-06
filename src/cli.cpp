@@ -31,6 +31,9 @@ void CommandLineParser::print_usage() {
                << L"  --resume               Resume cleanup after system reboot from saved state\n"
                << L"  --safe-mode-plan       Display Safe Mode removal plan and boot configuration\n"
                << L"  --quarantine           Move files to quarantine instead of deleting\n"
+               << L"  --quarantine-dir <dir> Custom base directory for quarantine storage\n"
+               << L"  --rpc                  Start headless JSON-RPC automation server on stdin/stdout\n"
+               << L"  --batch <file>         Obliterate targets listed sequentially in a batch file\n"
                << L"  --no-restore-point     Skip creating a system restore point\n"
                << L"  --require-restore-point Abort if system restore point creation fails\n"
                << L"  --list-sessions        List past quarantine and cleanup sessions\n"
@@ -110,6 +113,23 @@ Result<CommandLineOptions> CommandLineParser::parse(const std::vector<std::wstri
             options.safe_mode_plan = true;
         } else if (arg == L"--quarantine") {
             options.quarantine = true;
+        } else if (arg == L"--quarantine-dir") {
+            if (i + 1 < args.size()) {
+                options.quarantine_dir = args[++i];
+                options.quarantine = true;
+            } else {
+                Logger::error(L"Missing directory argument for --quarantine-dir");
+                return Win32Error::from_code(ERROR_INVALID_PARAMETER);
+            }
+        } else if (arg == L"--rpc") {
+            options.rpc = true;
+        } else if (arg == L"--batch") {
+            if (i + 1 < args.size()) {
+                options.batch_file = args[++i];
+            } else {
+                Logger::error(L"Missing batch file argument for --batch");
+                return Win32Error::from_code(ERROR_INVALID_PARAMETER);
+            }
         } else if (arg == L"--no-restore-point") {
             options.no_restore_point = true;
         } else if (arg == L"--require-restore-point") {

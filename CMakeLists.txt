@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(obliterator
-    VERSION 0.2.0
+    VERSION 0.3.0
     LANGUAGES CXX RC
 )
 
@@ -83,6 +83,9 @@ add_library(obliterator_core STATIC
     include/obliterator/tui_model.hpp
     include/obliterator/tui.hpp
     include/obliterator/executor.hpp
+    include/obliterator/volume.hpp
+    include/obliterator/rpc.hpp
+    include/obliterator/batch.hpp
     src/cli.cpp
     src/confidence_engine.cpp
     src/defuse.cpp
@@ -116,6 +119,9 @@ add_library(obliterator_core STATIC
     src/tui_model.cpp
     src/tui.cpp
     src/executor.cpp
+    src/volume.cpp
+    src/rpc.cpp
+    src/batch.cpp
 )
 
 target_include_directories(obliterator_core PUBLIC

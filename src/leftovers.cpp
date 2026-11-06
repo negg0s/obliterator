@@ -4,6 +4,7 @@
 #include "obliterator/log.hpp"
 #include "obliterator/path.hpp"
 #include "obliterator/safety.hpp"
+#include "obliterator/volume.hpp"
 #include "obliterator/wiper.hpp"
 
 #include <netfw.h>
@@ -223,6 +224,79 @@ std::vector<LeftoverItem> LeftoversCleaner::find_leftovers(const Target& target)
             // Possible match: directory name contains target.name
             if (!target.name.empty() && contains_str_ignore_case(dir_name, target.name)) {
                 add_item_unique({full_path, LeftoverKind::Folder, LeftoverConfidence::Possible, L"partial name match"});
+            }
+        }
+    }
+
+    // 1b. Secondary fixed volumes (e.g. D:, E:) software and game repositories
+    const auto fixed_drives = VolumeManager::get_fixed_drives();
+    const std::wstring sys_drive = VolumeManager::get_path_drive(expand_env_path(L"%SystemDrive%"));
+
+    for (const auto& drv : fixed_drives) {
+        if (!sys_drive.empty() && _wcsicmp(drv.c_str(), sys_drive.c_str()) == 0) {
+            continue; // System drive directories are handled via environment variables
+        }
+
+        const std::wstring secondary_candidate_dirs[] = {
+            drv + L"\\Program Files",
+            drv + L"\\Program Files (x86)",
+            drv + L"\\Games",
+            drv + L"\\Apps",
+            drv + L"\\Software",
+            drv + L"\\SteamLibrary\\steamapps\\common",
+            drv + L"\\Epic Games",
+            drv + L"\\GOG Games"
+        };
+
+        for (const auto& sec_dir : secondary_candidate_dirs) {
+            std::error_code sec_ec;
+            fs::path sec_path(sec_dir);
+            if (!fs::exists(sec_path, sec_ec) || !fs::is_directory(sec_path, sec_ec)) {
+                continue;
+            }
+
+            for (const auto& sec_entry : fs::directory_iterator(sec_path, sec_ec)) {
+                if (!sec_entry.is_directory(sec_ec)) {
+                    continue;
+                }
+
+                const std::wstring dir_name = sec_entry.path().filename().wstring();
+                const std::wstring full_path = sec_entry.path().wstring();
+
+                if (!SafetyValidator::validate_path(full_path)) {
+                    continue;
+                }
+
+                if (!target.name.empty() && equals_str_ignore_case(dir_name, target.name)) {
+                    add_item_unique({full_path, LeftoverKind::Folder, LeftoverConfidence::Definite,
+                                     L"exact product name on secondary volume " + drv});
+                    continue;
+                }
+
+                if (!target.publisher.empty() && equals_str_ignore_case(dir_name, target.publisher)) {
+                    bool child_matched = false;
+                    for (const auto& sub_e : fs::directory_iterator(sec_entry.path(), sec_ec)) {
+                        if (sub_e.is_directory(sec_ec) &&
+                            !target.name.empty() &&
+                            equals_str_ignore_case(sub_e.path().filename().wstring(), target.name)) {
+                            add_item_unique({sub_e.path().wstring(), LeftoverKind::Folder,
+                                             LeftoverConfidence::Definite,
+                                             L"product inside publisher folder on secondary volume " + drv});
+                            child_matched = true;
+                        }
+                    }
+                    if (child_matched) {
+                        continue;
+                    }
+                    add_item_unique({full_path, LeftoverKind::Folder, LeftoverConfidence::Definite,
+                                     L"publisher folder on secondary volume " + drv});
+                    continue;
+                }
+
+                if (!target.name.empty() && contains_str_ignore_case(dir_name, target.name)) {
+                    add_item_unique({full_path, LeftoverKind::Folder, LeftoverConfidence::Possible,
+                                     L"partial name match on secondary volume " + drv});
+                }
             }
         }
     }

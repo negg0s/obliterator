@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include "obliterator/confidence_engine.hpp"
+#include "obliterator/volume.hpp"
 
 #include <cstdint>
 #include <string>
@@ -75,6 +76,9 @@ struct FinalReport {
 
     // Confidence-scored artifacts
     std::vector<ScoredArtifact> artifacts;
+
+    // Multi-volume storage delta
+    std::vector<VolumeSpaceDelta> volume_deltas;
 
     void print_text() const;
     void print_json() const;

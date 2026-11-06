@@ -23,8 +23,11 @@
 #include "obliterator/uwp.hpp"
 #include "obliterator/quarantine.hpp"
 #include "obliterator/audit.hpp"
+#include "obliterator/batch.hpp"
 #include "obliterator/crypto.hpp"
 #include "obliterator/diagnose.hpp"
+#include "obliterator/rpc.hpp"
+#include "obliterator/volume.hpp"
 #include "obliterator/wiper.hpp"
 #include "obliterator/tui.hpp"
 #include "obliterator/executor.hpp"
@@ -54,6 +57,20 @@ int wmain(int argc, wchar_t* argv[]) {
     Logger::set_verbose(options.verbose);
     if (options.json) {
         Logger::set_json_mode(true);
+    }
+
+    if (!options.quarantine_dir.empty()) {
+        QuarantineManager::set_custom_quarantine_base_dir(options.quarantine_dir);
+    }
+
+    if (options.rpc) {
+        enable_required_privileges();
+        return RpcServer::run(options);
+    }
+
+    if (!options.batch_file.empty()) {
+        enable_required_privileges();
+        return BatchProcessor::run(options);
     }
 
     if (options.diagnose) {

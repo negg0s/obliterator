@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-06
+
+### Added
+- Multi-drive volume management engine (`VolumeManager`) querying fixed drives and tracking storage deltas.
+- Per-volume fast quarantine architecture: targets on secondary drives (e.g. `D:`) are moved via instantaneous atomic intra-volume MFT rename into `<drive>\$obliterator_quarantine\<id>\`, avoiding slow cross-volume physical file copying and preventing system drive storage exhaustion.
+- Custom quarantine destination option (`--quarantine-dir <path>`) with cross-volume discovery in session listings and restore commands.
+- Multi-volume storage delta reporting: exact physical bytes freed per volume (`C:`, `D:`, etc.) tracked before and after execution via `GetDiskFreeSpaceExW` and reported in console output and `--json`.
+- Multi-drive remnant scanner: searches secondary fixed disks for orphaned program folders in standard paths (`D:\Program Files`, `D:\Games`, `D:\Apps`, `D:\SteamLibrary`, `D:\Epic Games`, `D:\GOG Games`).
+- Headless JSON-RPC / NDJSON streaming daemon (`--rpc`): provides a streaming control protocol over standard I/O for automation tools, PowerShell, Python, Ansible, and external GUIs with real-time progress events.
+- Batch uninstallation pipeline (`--batch <file>`): non-interactive sequential removal supporting plaintext and JSON input lists with consolidated summary reporting for Golden Image preparation and Sysprep.
+
 ## [0.2.0] - 2026-11-04
 
 ### Added

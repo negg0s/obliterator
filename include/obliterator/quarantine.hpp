@@ -62,11 +62,23 @@ class QuarantineManager {
 public:
     static std::wstring get_quarantine_base_dir();
 
+    // Base quarantine directory for a given target path (per-volume or default)
+    static std::wstring get_quarantine_base_dir_for_path(const std::wstring& target_path);
+
+    // Checks and returns all potential quarantine roots across volumes
+    static std::vector<std::wstring> get_all_quarantine_roots();
+
+    // Locates a quarantine session directory across all potential volume roots
+    static std::wstring find_session_dir(const std::wstring& session_id);
+
+    // Sets an explicit custom quarantine base directory
+    static void set_custom_quarantine_base_dir(const std::wstring& dir);
+
     // Verifies free disk space on quarantine volume before moving files
-    static Result<void> check_free_space(uint64_t required_bytes);
+    static Result<void> check_free_space(uint64_t required_bytes, const std::wstring& target_quarantine_dir = {});
 
     // Executes quarantine for target directory and registry entries
-    static Result<QuarantineReport> quarantine_target(const Target& target);
+    static Result<QuarantineReport> quarantine_target(const Target& target, const std::wstring& custom_quarantine_dir = {});
 
     // Lists all stored quarantine sessions
     static std::vector<QuarantineSessionInfo> list_sessions();

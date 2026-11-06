@@ -4,7 +4,7 @@ Windows uninstallers frequently leave behind locked background services, auto-st
 
 obliterator is a single native C++20 console binary designed to inspect, disarm, and remove stubborn Windows applications and their residual files in milliseconds.
 
-[Download Latest Release (v0.2.0)](https://github.com/negg0s/obliterator/releases/latest)
+[Download Latest Release (v0.3.0)](https://github.com/negg0s/obliterator/releases/latest)
 
 ## Quick Start
 
@@ -33,7 +33,10 @@ obliterator "C:\Program Files\StubbornApp" --force
 | `--native-first` | Attempt silent native vendor uninstaller before remnant cleanup |
 | `--native-timeout <sec>` | Timeout for vendor uninstaller before terminating it (default: 120s) |
 | `--all-profiles` | Scan and clean remnants across all user profiles on the host |
-| `--quarantine` | Move files to `%ProgramData%\obliterator\quarantine` instead of deleting |
+| `--quarantine` | Move files to quarantine instead of deleting |
+| `--quarantine-dir <dir>` | Custom base directory for quarantine storage |
+| `--rpc` | Start headless JSON-RPC automation server on stdin/stdout |
+| `--batch <file>` | Obliterate targets listed sequentially in a batch file |
 | `--no-restore-point` | Skip System Restore point generation |
 | `--require-restore-point` | Abort execution if System Restore point generation fails |
 | `--confidence <score>` | Minimum confidence threshold (0-100) for deleting remnants (default: 50) |
@@ -52,6 +55,23 @@ When obliterator targets an application, it executes sequentially through seven 
 5. **Freeze & Terminate**: Freezes process threads using `NtSuspendProcess`, revokes file lock handles via Restart Manager and NT handle enumeration, and terminates the tree using `TerminateProcess`.
 6. **Filesystem Removal / Quarantine**: Strips read-only attributes and ACL restrictions using backup semantics (`SE_RESTORE_NAME`, `SE_BACKUP_NAME`). Deletes files across multi-threaded folder batches using POSIX unlink semantics (`FILE_DISPOSITION_FLAG_POSIX_SEMANTICS`), bypassing NTFS directory metadata serialization. If `--quarantine` is active, files are relocated to quarantine storage with an encrypted or SDDL-preserved manifest.
 7. **Registry & Artifact Cleanup**: Removes associated keys across loaded user hives and offline profiles (`NTUSER.DAT` / `UsrClass.dat` via temporary `RegLoadKeyW` mounts), purges firewall rules, removes service registrations via Service Control Manager, and clears shell icon caches.
+
+## Multi-Drive & Per-Volume Fast Quarantine
+
+Windows installations often place large applications, games, and runtime stores on secondary fixed drives (e.g. `D:\Games`, `D:\Program Files`, `D:\Software`).
+
+- **Atomic Intra-Volume Move**: When `--quarantine` is enabled for an application residing on a secondary disk like `D:`, obliterator stores quarantine sessions directly on the target volume under `D:\$obliterator_quarantine\<id>\`. Files are relocated using intra-volume NTFS index renames without cross-volume data copying. This completes in milliseconds and prevents filling system drive `C:`.
+- **Custom Quarantine Path**: Pass `--quarantine-dir <path>` to store all quarantine archives on a dedicated volume or backup drive.
+- **Cross-Volume Session Discovery**: Commands such as `--list-sessions`, `--restore <id>`, and `--purge-quarantine <id>` automatically detect sessions across all fixed disk volumes and custom paths.
+- **Volume Freed Delta Tracking**: Queries physical volume clusters via `GetDiskFreeSpaceExW` before and after execution, displaying exact storage freed per volume (`C:`, `D:`) in text summaries and JSON reports.
+- **Multi-Drive Remnant Scan**: Scans standard directories across all attached fixed drives (`D:\Program Files`, `D:\Games`, `D:\Apps`, `D:\SteamLibrary`, `D:\Epic Games`, `D:\GOG Games`) for orphaned application trees.
+
+## Automation & DevOps Administration
+
+obliterator includes first-class headless protocols for orchestration via PowerShell, Python, Ansible, and Golden Image pipelines:
+
+- **Headless JSON-RPC / NDJSON Daemon (`--rpc`)**: Runs obliterator as a persistent child process communicating via single-line JSON requests and responses over standard I/O. Supports `ping`, `list_installed`, `scan`, `execute`, `restore`, `list_sessions`, and `diagnose`, streaming real-time event updates (`phase`, `log`) as operations proceed.
+- **Batch Processing (`--batch <file>`)**: Sequentially obliterates a list of applications specified in a plaintext or JSON array file with zero interactive prompts, emitting consolidated batch reports for Sysprep and desktop provisioning.
 
 ## What obliterator Does NOT Do
 

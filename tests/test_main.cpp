@@ -31,6 +31,9 @@
 #include "obliterator/diagnose.hpp"
 #include "obliterator/tui.hpp"
 #include "obliterator/tui_model.hpp"
+#include "obliterator/volume.hpp"
+#include "obliterator/rpc.hpp"
+#include "obliterator/batch.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
@@ -1700,6 +1703,120 @@ static void test_system_diagnostics_sanitization() {
     check(!report.value().empty(), "diagnostic report is non-empty");
 }
 
+static void test_volume_manager() {
+    auto fixed = VolumeManager::get_fixed_drives();
+    check(!fixed.empty(), "at least one fixed drive enumerated");
+
+    check(VolumeManager::get_path_drive(L"C:\\Windows\\System32") == L"C:", "path drive C: extracted");
+    check(VolumeManager::get_path_drive(L"\\\\?\\D:\\Games\\Portal") == L"D:", "path drive D: extracted with prefix");
+
+    check(VolumeManager::is_same_volume(L"C:\\Foo", L"C:\\Bar"), "C:\\Foo and C:\\Bar same volume");
+    check(!VolumeManager::is_same_volume(L"C:\\Foo", L"D:\\Bar"), "C:\\Foo and D:\\Bar not same volume");
+
+    auto snaps = VolumeManager::snapshot_volumes();
+    check(!snaps.empty(), "snapshots non-empty");
+    auto deltas = VolumeManager::compute_deltas(snaps);
+    check(deltas.size() == snaps.size(), "deltas count matches snapshots");
+}
+
+static void test_per_volume_quarantine_and_multi_roots() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+
+    const std::wstring temp_custom_dir = (fs::temp_directory_path(ec) / L"obliterator_test_q_custom").wstring();
+    fs::create_directories(temp_custom_dir, ec);
+
+    QuarantineManager::set_custom_quarantine_base_dir(temp_custom_dir);
+    check(QuarantineManager::get_quarantine_base_dir() == temp_custom_dir, "custom quarantine dir applied");
+
+    auto roots = QuarantineManager::get_all_quarantine_roots();
+    bool found_custom = false;
+    for (const auto& r : roots) {
+        if (_wcsicmp(r.c_str(), temp_custom_dir.c_str()) == 0) {
+            found_custom = true;
+            break;
+        }
+    }
+    check(found_custom, "custom quarantine dir in all roots");
+
+    // Create fake session in custom dir
+    std::wstring fake_session = temp_custom_dir + L"\\test_session_123";
+    fs::create_directories(fake_session, ec);
+    std::wstring found_dir = QuarantineManager::find_session_dir(L"test_session_123");
+    check(!found_dir.empty(), "found session in custom root");
+
+    // Reset custom quarantine dir
+    QuarantineManager::set_custom_quarantine_base_dir(L"");
+    check(QuarantineManager::get_quarantine_base_dir().find(L"ProgramData") != std::wstring::npos, "reset to default ProgramData");
+
+    fs::remove_all(temp_custom_dir, ec);
+}
+
+static void test_rpc_server_methods() {
+    CommandLineOptions base_opts;
+    bool should_exit = false;
+
+    // Test ping
+    std::wstring ping_resp = RpcServer::handle_request_line(L"{\"id\":10,\"method\":\"ping\"}", base_opts, should_exit);
+    check(ping_resp.find(L"\"status\":\"ok\"") != std::wstring::npos, "rpc ping status ok");
+    check(ping_resp.find(L"\"version\":\"0.3.0\"") != std::wstring::npos, "rpc ping version 0.3.0");
+    check(!should_exit, "ping does not exit");
+
+    // Test list_sessions
+    std::wstring sessions_resp = RpcServer::handle_request_line(L"{\"id\":11,\"method\":\"list_sessions\"}", base_opts, should_exit);
+    check(sessions_resp.find(L"\"result\":[") != std::wstring::npos, "rpc list_sessions returns array");
+
+    // Test list_installed
+    std::wstring apps_resp = RpcServer::handle_request_line(L"{\"id\":12,\"method\":\"list_installed\"}", base_opts, should_exit);
+    check(apps_resp.find(L"\"result\":[") != std::wstring::npos, "rpc list_installed returns array");
+
+    // Test exit
+    std::wstring exit_resp = RpcServer::handle_request_line(L"{\"id\":13,\"method\":\"exit\"}", base_opts, should_exit);
+    check(should_exit, "exit method sets should_exit");
+    check(exit_resp.find(L"\"status\":\"exiting\"") != std::wstring::npos, "rpc exit response");
+}
+
+static void test_batch_file_parser() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+
+    const fs::path txt_file = fs::temp_directory_path(ec) / L"obliterator_test_batch.txt";
+    {
+        std::wofstream out(txt_file);
+        out << L"# Sample batch file\n"
+            << L"AppAlpha\n"
+            << L"\n"
+            << L"; Comment\n"
+            << L"D:\\Games\\AppBeta\n"
+            << L"   AppGamma   \n";
+    }
+
+    auto res = BatchProcessor::parse_batch_file(txt_file.wstring());
+    check(res.has_value(), "parse plaintext batch file");
+    check(res.value().size() == 3, "extracted 3 batch targets");
+    check(res.value()[0] == L"AppAlpha", "first batch target is AppAlpha");
+    check(res.value()[1] == L"D:\\Games\\AppBeta", "second batch target is D:\\Games\\AppBeta");
+    check(res.value()[2] == L"AppGamma", "third batch target trimmed");
+
+    fs::remove(txt_file, ec);
+
+    // Test JSON batch file
+    const fs::path json_file = fs::temp_directory_path(ec) / L"obliterator_test_batch.json";
+    {
+        std::wofstream out(json_file);
+        out << L"[\"FirstApp\", \"D:\\\\Games\\\\SecondApp\", \"ThirdApp\"]\n";
+    }
+
+    auto j_res = BatchProcessor::parse_batch_file(json_file.wstring());
+    check(j_res.has_value(), "parse JSON batch file");
+    check(j_res.value().size() == 3, "extracted 3 JSON batch targets");
+    check(j_res.value()[0] == L"FirstApp", "first JSON target");
+    check(j_res.value()[1] == L"D:\\Games\\SecondApp", "second JSON target escaped path");
+    check(j_res.value()[2] == L"ThirdApp", "third JSON target");
+
+    fs::remove(json_file, ec);
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -1789,6 +1906,14 @@ int main() {
     test_tui_model_confirm_dialog();
     std::wcout << L"[RUN] test_system_diagnostics_sanitization\n" << std::flush;
     test_system_diagnostics_sanitization();
+    std::wcout << L"[RUN] test_volume_manager\n" << std::flush;
+    test_volume_manager();
+    std::wcout << L"[RUN] test_per_volume_quarantine_and_multi_roots\n" << std::flush;
+    test_per_volume_quarantine_and_multi_roots();
+    std::wcout << L"[RUN] test_rpc_server_methods\n" << std::flush;
+    test_rpc_server_methods();
+    std::wcout << L"[RUN] test_batch_file_parser\n" << std::flush;
+    test_batch_file_parser();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;

@@ -73,6 +73,19 @@ void FinalReport::print_text() const {
         }
     }
 
+    if (!volume_deltas.empty()) {
+        std::wcout << L"\n Storage Freed per Volume:\n";
+        for (const auto& vd : volume_deltas) {
+            if (vd.freed_bytes != 0) {
+                std::wcout << L"   * Volume " << vd.drive << L": "
+                           << (vd.freed_bytes > 0 ? L"+" : L"")
+                           << FileWiper::format_bytes(static_cast<uint64_t>(vd.freed_bytes > 0 ? vd.freed_bytes : -vd.freed_bytes))
+                           << L" (Free: " << FileWiper::format_bytes(vd.final_free_bytes)
+                           << L" / Total: " << FileWiper::format_bytes(vd.total_bytes) << L")\n";
+            }
+        }
+    }
+
     std::wcout << L"================================================================================\n\n";
 }
 
@@ -157,6 +170,17 @@ void FinalReport::print_json() const {
         }
         std::wcout << L"      ]\n"
                    << L"    }" << (i + 1 < artifacts.size() ? L"," : L"") << L"\n";
+    }
+    std::wcout << L"  ],\n  \"volume_deltas\": [\n";
+    for (size_t i = 0; i < volume_deltas.size(); ++i) {
+        const auto& vd = volume_deltas[i];
+        std::wcout << L"    {\n"
+                   << L"      \"drive\": \"" << escape_json(vd.drive) << L"\",\n"
+                   << L"      \"freed_bytes\": " << vd.freed_bytes << L",\n"
+                   << L"      \"initial_free_bytes\": " << vd.initial_free_bytes << L",\n"
+                   << L"      \"final_free_bytes\": " << vd.final_free_bytes << L",\n"
+                   << L"      \"total_bytes\": " << vd.total_bytes << L"\n"
+                   << L"    }" << (i + 1 < volume_deltas.size() ? L"," : L"") << L"\n";
     }
     std::wcout << L"  ]\n}\n";
 }

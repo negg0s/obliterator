@@ -5,6 +5,7 @@
 #include "obliterator/log.hpp"
 #include "obliterator/path.hpp"
 #include "obliterator/registry_cleaner.hpp"
+#include "obliterator/volume.hpp"
 #include "obliterator/wiper.hpp"
 
 #include <aclapi.h>
@@ -23,12 +24,89 @@ namespace obliterator {
 
 namespace fs = std::filesystem;
 
+static std::wstring s_custom_quarantine_base;
+
+void QuarantineManager::set_custom_quarantine_base_dir(const std::wstring& dir) {
+    s_custom_quarantine_base = dir;
+}
+
 std::wstring QuarantineManager::get_quarantine_base_dir() {
+    if (!s_custom_quarantine_base.empty()) {
+        return s_custom_quarantine_base;
+    }
     wchar_t buf[MAX_PATH]{};
     if (GetEnvironmentVariableW(L"ProgramData", buf, MAX_PATH) > 0) {
         return std::wstring(buf) + L"\\obliterator\\quarantine";
     }
     return L"C:\\ProgramData\\obliterator\\quarantine";
+}
+
+std::wstring QuarantineManager::get_quarantine_base_dir_for_path(const std::wstring& target_path) {
+    if (!s_custom_quarantine_base.empty()) {
+        return s_custom_quarantine_base;
+    }
+
+    if (!target_path.empty()) {
+        const std::wstring drive = VolumeManager::get_path_drive(target_path);
+        if (!drive.empty()) {
+            std::wstring candidate = drive + L"\\$obliterator_quarantine";
+            std::error_code ec;
+            fs::create_directories(candidate, ec);
+            if (!ec && fs::exists(candidate, ec)) {
+                SetFileAttributesW(candidate.c_str(), FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
+                return candidate;
+            }
+        }
+    }
+
+    return get_quarantine_base_dir();
+}
+
+std::vector<std::wstring> QuarantineManager::get_all_quarantine_roots() {
+    std::vector<std::wstring> roots;
+    std::vector<std::wstring> seen;
+
+    auto add_unique = [&](const std::wstring& p) {
+        if (p.empty()) return;
+        for (const auto& s : seen) {
+            if (_wcsicmp(s.c_str(), p.c_str()) == 0) return;
+        }
+        seen.push_back(p);
+        roots.push_back(p);
+    };
+
+    if (!s_custom_quarantine_base.empty()) {
+        add_unique(s_custom_quarantine_base);
+    }
+    add_unique(get_quarantine_base_dir());
+
+    for (const auto& d : VolumeManager::get_fixed_drives()) {
+        std::wstring per_vol = d + L"\\$obliterator_quarantine";
+        std::error_code ec;
+        if (fs::exists(per_vol, ec)) {
+            add_unique(per_vol);
+        }
+    }
+    return roots;
+}
+
+std::wstring QuarantineManager::find_session_dir(const std::wstring& session_id) {
+    if (session_id.empty()) {
+        return {};
+    }
+
+    std::error_code ec;
+    if (fs::exists(session_id, ec) && fs::is_directory(session_id, ec)) {
+        return session_id;
+    }
+
+    for (const auto& root : get_all_quarantine_roots()) {
+        std::wstring candidate = root + L"\\" + session_id;
+        if (fs::exists(candidate, ec) && fs::is_directory(candidate, ec)) {
+            return candidate;
+        }
+    }
+    return {};
 }
 
 static std::wstring escape_json(std::wstring_view input) {
@@ -175,8 +253,8 @@ bool QuarantineManager::save_registry_binary_hive(HKEY hKey, const std::wstring&
     return st == ERROR_SUCCESS;
 }
 
-Result<void> QuarantineManager::check_free_space(uint64_t required_bytes) {
-    const std::wstring base_dir = get_quarantine_base_dir();
+Result<void> QuarantineManager::check_free_space(uint64_t required_bytes, const std::wstring& target_quarantine_dir) {
+    const std::wstring base_dir = target_quarantine_dir.empty() ? get_quarantine_base_dir() : target_quarantine_dir;
     std::error_code ec;
     fs::create_directories(base_dir, ec);
 
@@ -218,7 +296,7 @@ static void collect_files_recursive(const fs::path& dir, std::vector<fs::path>& 
     }
 }
 
-Result<QuarantineReport> QuarantineManager::quarantine_target(const Target& target) {
+Result<QuarantineReport> QuarantineManager::quarantine_target(const Target& target, const std::wstring& custom_quarantine_dir) {
     QuarantineReport report;
     if (target.root_path.empty()) {
         return report;
@@ -228,13 +306,21 @@ Result<QuarantineReport> QuarantineManager::quarantine_target(const Target& targ
     uint64_t total_bytes = 0;
     collect_files_recursive(target.root_path, files_to_quarantine, total_bytes);
 
-    auto space_res = check_free_space(total_bytes);
+    std::wstring base_dir = custom_quarantine_dir;
+    if (base_dir.empty()) {
+        base_dir = get_quarantine_base_dir_for_path(target.root_path);
+    }
+
+    const bool is_intra_volume = VolumeManager::is_same_volume(target.root_path, base_dir);
+    // On the same volume, file moves do not allocate physical payload space (instant MFT rename)
+    const uint64_t needed_space = is_intra_volume ? (50ULL * 1024ULL * 1024ULL) : total_bytes;
+    auto space_res = check_free_space(needed_space, base_dir);
     if (!space_res) {
         return space_res.error();
     }
 
     const std::wstring session_id = generate_session_id(target.name);
-    const std::wstring session_dir = get_quarantine_base_dir() + L"\\" + session_id;
+    const std::wstring session_dir = base_dir + L"\\" + session_id;
     const std::wstring files_dir = session_dir + L"\\files";
     const std::wstring reg_dir = session_dir + L"\\registry";
 
@@ -287,8 +373,17 @@ Result<QuarantineReport> QuarantineManager::quarantine_target(const Target& targ
         const std::wstring ext_dest = FileWiper::ensure_extended_path(dest_path);
         FileWiper::strip_file_attributes(orig_path);
 
-        if (MoveFileExW(ext_orig.c_str(), ext_dest.c_str(),
-                        MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING)) {
+        bool moved = false;
+        if (is_intra_volume) {
+            // Fast atomic intra-volume move
+            moved = MoveFileExW(ext_orig.c_str(), ext_dest.c_str(), MOVEFILE_REPLACE_EXISTING);
+        }
+        if (!moved) {
+            moved = MoveFileExW(ext_orig.c_str(), ext_dest.c_str(),
+                                MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING);
+        }
+
+        if (moved) {
             report.files_quarantined++;
             report.bytes_quarantined += entry.size;
             manifest_entries.push_back(std::move(entry));
@@ -418,73 +513,89 @@ static std::wstring extract_json_field(const std::wstring& content, std::wstring
         return {};
     }
 
-    size_t first_quote = content.find(L'\"', colon);
-    if (first_quote == std::wstring::npos) {
-        // Might be number
-        size_t start = content.find_first_not_of(L" \t\r\n", colon + 1);
-        if (start != std::wstring::npos) {
-            size_t end = content.find_first_of(L",}\r\n", start);
-            return content.substr(start, end - start);
-        }
+    size_t start = content.find_first_not_of(L" \t\r\n", colon + 1);
+    if (start == std::wstring::npos) {
         return {};
     }
 
-    std::wstring str;
-    size_t i = first_quote + 1;
-    while (i < content.size()) {
-        if (content[i] == L'\\') {
-            if (i + 1 < content.size()) {
-                if (content[i + 1] == L'\\') str += L'\\';
-                else if (content[i + 1] == L'\"') str += L'\"';
-                else if (content[i + 1] == L'n') str += L'\n';
-                else if (content[i + 1] == L'r') str += L'\r';
-                else if (content[i + 1] == L't') str += L'\t';
-                else str += content[i + 1];
-                i += 2;
-                continue;
+    if (content[start] == L'\"') {
+        std::wstring str;
+        size_t i = start + 1;
+        while (i < content.size()) {
+            if (content[i] == L'\\') {
+                if (i + 1 < content.size()) {
+                    if (content[i + 1] == L'\\') str += L'\\';
+                    else if (content[i + 1] == L'\"') str += L'\"';
+                    else if (content[i + 1] == L'n') str += L'\n';
+                    else if (content[i + 1] == L'r') str += L'\r';
+                    else if (content[i + 1] == L't') str += L'\t';
+                    else str += content[i + 1];
+                    i += 2;
+                    continue;
+                }
+            } else if (content[i] == L'\"') {
+                break;
+            } else {
+                str += content[i];
             }
-        } else if (content[i] == L'\"') {
-            break;
-        } else {
-            str += content[i];
+            i++;
         }
-        i++;
+        return str;
     }
-    return str;
+
+    size_t end = content.find_first_of(L",}\r\n", start);
+    if (end == std::wstring::npos) {
+        end = content.size();
+    }
+    return content.substr(start, end - start);
 }
 
 std::vector<QuarantineSessionInfo> QuarantineManager::list_sessions() {
     std::vector<QuarantineSessionInfo> sessions;
-    const std::wstring base_dir = get_quarantine_base_dir();
+    const auto roots = get_all_quarantine_roots();
     std::error_code ec;
-    if (!fs::exists(base_dir, ec)) {
-        return sessions;
-    }
 
-    for (const auto& entry : fs::directory_iterator(base_dir, ec)) {
-        if (entry.is_directory(ec)) {
-            std::wstring session_file = entry.path().wstring() + L"\\session.json";
-            std::wifstream in(session_file);
-            if (in.is_open()) {
-                std::wstringstream ss;
-                ss << in.rdbuf();
-                std::wstring content = ss.str();
+    for (const auto& base_dir : roots) {
+        if (!fs::exists(base_dir, ec)) {
+            continue;
+        }
 
-                QuarantineSessionInfo info;
-                info.session_id = extract_json_field(content, L"session_id");
-                info.timestamp = extract_json_field(content, L"timestamp");
-                info.target_name = extract_json_field(content, L"target_name");
-                info.target_root = extract_json_field(content, L"target_root");
-                try {
-                    info.files_count = std::stoull(extract_json_field(content, L"files_count"));
-                    info.total_bytes = std::stoull(extract_json_field(content, L"total_bytes"));
-                    info.registry_keys_count = std::stoull(extract_json_field(content, L"registry_keys_count"));
-                } catch (...) {}
+        for (const auto& entry : fs::directory_iterator(base_dir, ec)) {
+            if (entry.is_directory(ec)) {
+                std::wstring session_file = entry.path().wstring() + L"\\session.json";
+                std::wifstream in(session_file);
+                if (in.is_open()) {
+                    std::wstringstream ss;
+                    ss << in.rdbuf();
+                    std::wstring content = ss.str();
 
-                if (info.session_id.empty()) {
-                    info.session_id = entry.path().filename().wstring();
+                    QuarantineSessionInfo info;
+                    info.session_id = extract_json_field(content, L"session_id");
+                    info.timestamp = extract_json_field(content, L"timestamp");
+                    info.target_name = extract_json_field(content, L"target_name");
+                    info.target_root = extract_json_field(content, L"target_root");
+                    try {
+                        info.files_count = std::stoull(extract_json_field(content, L"files_count"));
+                        info.total_bytes = std::stoull(extract_json_field(content, L"total_bytes"));
+                        info.registry_keys_count = std::stoull(extract_json_field(content, L"registry_keys_count"));
+                    } catch (...) {}
+
+                    if (info.session_id.empty()) {
+                        info.session_id = entry.path().filename().wstring();
+                    }
+
+                    // Avoid duplicate session IDs across roots
+                    bool already_present = false;
+                    for (const auto& existing : sessions) {
+                        if (existing.session_id == info.session_id) {
+                            already_present = true;
+                            break;
+                        }
+                    }
+                    if (!already_present) {
+                        sessions.push_back(std::move(info));
+                    }
                 }
-                sessions.push_back(std::move(info));
             }
         }
     }
@@ -541,9 +652,9 @@ Result<RestoreReport> QuarantineManager::restore_session(const std::wstring& ses
     RestoreReport report;
     report.session_id = session_id;
 
-    const std::wstring session_dir = get_quarantine_base_dir() + L"\\" + session_id;
+    const std::wstring session_dir = find_session_dir(session_id);
     std::error_code ec;
-    if (!fs::exists(session_dir, ec)) {
+    if (session_dir.empty() || !fs::exists(session_dir, ec)) {
         Logger::error(L"Quarantine session not found: " + session_id);
         return Win32Error::from_code(ERROR_FILE_NOT_FOUND);
     }
@@ -672,9 +783,9 @@ Result<RestoreReport> QuarantineManager::restore_session(const std::wstring& ses
 }
 
 Result<void> QuarantineManager::purge_session(const std::wstring& session_id) {
-    const std::wstring session_dir = get_quarantine_base_dir() + L"\\" + session_id;
+    const std::wstring session_dir = find_session_dir(session_id);
     std::error_code ec;
-    if (!fs::exists(session_dir, ec)) {
+    if (session_dir.empty() || !fs::exists(session_dir, ec)) {
         return Win32Error::from_code(ERROR_FILE_NOT_FOUND);
     }
 
@@ -693,23 +804,26 @@ Result<void> QuarantineManager::purge_session(const std::wstring& session_id) {
 }
 
 Result<size_t> QuarantineManager::purge_older_than(uint32_t days) {
-    const std::wstring base_dir = get_quarantine_base_dir();
+    const auto roots = get_all_quarantine_roots();
     std::error_code ec;
-    if (!fs::exists(base_dir, ec)) {
-        return 0;
-    }
 
     const auto now = fs::file_time_type::clock::now();
     const auto cutoff = now - std::chrono::hours(24 * days);
     size_t purged_count = 0;
 
-    for (const auto& entry : fs::directory_iterator(base_dir, ec)) {
-        if (entry.is_directory(ec)) {
-            auto lwt = entry.last_write_time(ec);
-            if (!ec && lwt < cutoff) {
-                std::wstring sid = entry.path().filename().wstring();
-                if (purge_session(sid)) {
-                    purged_count++;
+    for (const auto& base_dir : roots) {
+        if (!fs::exists(base_dir, ec)) {
+            continue;
+        }
+
+        for (const auto& entry : fs::directory_iterator(base_dir, ec)) {
+            if (entry.is_directory(ec)) {
+                auto lwt = entry.last_write_time(ec);
+                if (!ec && lwt < cutoff) {
+                    std::wstring sid = entry.path().filename().wstring();
+                    if (purge_session(sid)) {
+                        purged_count++;
+                    }
                 }
             }
         }
