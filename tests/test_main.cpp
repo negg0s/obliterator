@@ -41,6 +41,9 @@
 #include "obliterator/ads.hpp"
 #include "obliterator/cert_cleaner.hpp"
 #include "obliterator/wfp_cleaner.hpp"
+#include "obliterator/association_cleaner.hpp"
+#include "obliterator/event_log_cleaner.hpp"
+#include "obliterator/wer_cleaner.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
@@ -2030,6 +2033,91 @@ static void test_wfp_cleaner() {
     check(rep.filters_removed == 0 && rep.providers_removed == 0, "dry run on empty target returns 0 removals");
 }
 
+static void test_association_cleaner() {
+    Target target;
+    target.name = L"MockAssocApp";
+    target.root_path = L"C:\\Program Files\\MockAssocApp";
+
+    // 1. Setup mock URL protocol in HKCU\Software\Classes
+    const std::wstring proto_key = L"Software\\Classes\\mockassocproto";
+    UniqueHKey hProto;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, proto_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hProto.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring desc = L"URL:MockAssoc Protocol";
+        RegSetValueExW(hProto.get(), nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(desc.c_str()), static_cast<DWORD>((desc.size() + 1) * sizeof(wchar_t)));
+        RegSetValueExW(hProto.get(), L"URL Protocol", 0, REG_SZ, reinterpret_cast<const BYTE*>(L""), sizeof(wchar_t));
+
+        UniqueHKey hCmd;
+        if (RegCreateKeyExW(hProto.get(), L"shell\\open\\command", 0, nullptr, 0, KEY_WRITE, nullptr, hCmd.put(), nullptr) == ERROR_SUCCESS) {
+            const std::wstring cmd = L"\"" + target.root_path + L"\\app.exe\" \"%1\"";
+            RegSetValueExW(hCmd.get(), nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(cmd.c_str()), static_cast<DWORD>((cmd.size() + 1) * sizeof(wchar_t)));
+        }
+    }
+
+    // 2. Setup mock App Path in HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths
+    const std::wstring apppath_key = L"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\mockassocapp.exe";
+    UniqueHKey hAppPath;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, apppath_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hAppPath.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring exe_path = target.root_path + L"\\mockassocapp.exe";
+        RegSetValueExW(hAppPath.get(), nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(exe_path.c_str()), static_cast<DWORD>((exe_path.size() + 1) * sizeof(wchar_t)));
+    }
+
+    // Dry-run cleanup: should detect mock protocol and mock app path
+    auto dry_rep = AssociationCleaner::clean_associations(target, true);
+    check(dry_rep.protocols_removed >= 1, "AssociationCleaner dry run detected mock protocol");
+    check(dry_rep.app_paths_removed >= 1, "AssociationCleaner dry run detected mock app path");
+
+    // Live cleanup: removes mock protocol and mock app path
+    auto live_rep = AssociationCleaner::clean_associations(target, false);
+    check(live_rep.protocols_removed >= 1, "AssociationCleaner live removed mock protocol");
+    check(live_rep.app_paths_removed >= 1, "AssociationCleaner live removed mock app path");
+
+    // Verify keys were deleted
+    UniqueHKey hVerify;
+    LSTATUS s1 = RegOpenKeyExW(HKEY_CURRENT_USER, proto_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s1 != ERROR_SUCCESS, "mock protocol key was deleted from registry");
+    hVerify.reset();
+    LSTATUS s2 = RegOpenKeyExW(HKEY_CURRENT_USER, apppath_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s2 != ERROR_SUCCESS, "mock app path key was deleted from registry");
+}
+
+static void test_event_log_cleaner() {
+    Target dummy;
+    dummy.name = L"NonExistentEvt987";
+    dummy.root_path = L"C:\\Program Files\\NonExistentEvt987";
+
+    // Dry-run on non-existent target returns 0
+    auto rep = EventLogCleaner::clean_event_log_sources(dummy, true);
+    check(rep.event_sources_removed == 0 && rep.etw_publishers_removed == 0,
+          "clean_event_log_sources on non-existent target returns 0");
+}
+
+static void test_wer_cleaner() {
+    Target target;
+    target.name = L"MockWerApp";
+    target.root_path = L"C:\\Program Files\\MockWerApp";
+
+    // Setup mock LocalDumps key in HKCU
+    const std::wstring dumps_key = L"Software\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\\mockwerapp.exe";
+    UniqueHKey hDump;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, dumps_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hDump.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring folder = target.root_path + L"\\dumps";
+        RegSetValueExW(hDump.get(), L"DumpFolder", 0, REG_SZ, reinterpret_cast<const BYTE*>(folder.c_str()), static_cast<DWORD>((folder.size() + 1) * sizeof(wchar_t)));
+    }
+
+    // Dry run
+    auto dry_rep = WerCleaner::clean_wer_artifacts(target, true);
+    check(dry_rep.local_dumps_keys_removed >= 1, "WerCleaner dry run detected mock LocalDumps key");
+
+    // Live run
+    auto live_rep = WerCleaner::clean_wer_artifacts(target, false);
+    check(live_rep.local_dumps_keys_removed >= 1, "WerCleaner live removed mock LocalDumps key");
+
+    // Verify key was deleted
+    UniqueHKey hVerify;
+    LSTATUS s = RegOpenKeyExW(HKEY_CURRENT_USER, dumps_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s != ERROR_SUCCESS, "mock LocalDumps key deleted from registry");
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -2141,6 +2229,12 @@ int main() {
     test_cert_cleaner();
     std::wcout << L"[RUN] test_wfp_cleaner\n" << std::flush;
     test_wfp_cleaner();
+    std::wcout << L"[RUN] test_association_cleaner\n" << std::flush;
+    test_association_cleaner();
+    std::wcout << L"[RUN] test_event_log_cleaner\n" << std::flush;
+    test_event_log_cleaner();
+    std::wcout << L"[RUN] test_wer_cleaner\n" << std::flush;
+    test_wer_cleaner();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;

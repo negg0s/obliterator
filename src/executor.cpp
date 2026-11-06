@@ -1,15 +1,18 @@
 #include "obliterator/executor.hpp"
 
 #include "obliterator/ads.hpp"
+#include "obliterator/association_cleaner.hpp"
 #include "obliterator/cert_cleaner.hpp"
 #include "obliterator/confidence_engine.hpp"
 #include "obliterator/defuse.hpp"
 #include "obliterator/driver_cleaner.hpp"
 #include "obliterator/error.hpp"
+#include "obliterator/event_log_cleaner.hpp"
 #include "obliterator/leftovers.hpp"
 #include "obliterator/log.hpp"
 #include "obliterator/msi_cleaner.hpp"
 #include "obliterator/plan.hpp"
+#include "obliterator/wer_cleaner.hpp"
 #include "obliterator/wfp_cleaner.hpp"
 #include "obliterator/process.hpp"
 #include "obliterator/profile.hpp"
@@ -481,6 +484,29 @@ FinalReport execute_obliteration(
     const auto cert_rep = CertificateCleaner::clean_certificates(target, options.dry_run);
     if (cert_rep.certificates_removed > 0) {
         emit_log(L"Purged " + std::to_wstring(cert_rep.certificates_removed) + L" certificates from system store.");
+    }
+
+    // Clean URL protocols, App Paths, and Explorer OpenWith file associations
+    const auto assoc_rep = AssociationCleaner::clean_associations(target, options.dry_run);
+    if (assoc_rep.protocols_removed > 0 || assoc_rep.app_paths_removed > 0 || assoc_rep.file_exts_cleaned > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(assoc_rep.protocols_removed) + L" URL protocols, " +
+                 std::to_wstring(assoc_rep.app_paths_removed) + L" App Paths, and " +
+                 std::to_wstring(assoc_rep.file_exts_cleaned) + L" file associations.");
+    }
+
+    // Clean classic Event Log sources and ETW event publishers
+    const auto evt_rep = EventLogCleaner::clean_event_log_sources(target, options.dry_run);
+    if (evt_rep.event_sources_removed > 0 || evt_rep.etw_publishers_removed > 0) {
+        emit_log(L"Purged " + std::to_wstring(evt_rep.event_sources_removed) + L" Event Log sources and " +
+                 std::to_wstring(evt_rep.etw_publishers_removed) + L" ETW event publishers.");
+    }
+
+    // Clean Windows Error Reporting (WER) LocalDumps and crash report archives
+    const auto wer_rep = WerCleaner::clean_wer_artifacts(target, options.dry_run);
+    if (wer_rep.local_dumps_keys_removed > 0 || wer_rep.crash_dumps_deleted > 0 || wer_rep.wer_reports_deleted > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(wer_rep.local_dumps_keys_removed) + L" WER dump configs, " +
+                 std::to_wstring(wer_rep.crash_dumps_deleted) + L" crash dumps, and " +
+                 std::to_wstring(wer_rep.wer_reports_deleted) + L" report folders.");
     }
 
     namespace fs = std::filesystem;
