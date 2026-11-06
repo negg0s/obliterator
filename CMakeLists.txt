@@ -114,6 +114,9 @@ add_library(obliterator_core STATIC
     include/obliterator/media_cleaner.hpp
     include/obliterator/dcom_cleaner.hpp
     include/obliterator/aedebug_cleaner.hpp
+    include/obliterator/namespace_cleaner.hpp
+    include/obliterator/wsl_cleaner.hpp
+    include/obliterator/terminal_cleaner.hpp
     src/cli.cpp
     src/confidence_engine.cpp
     src/defuse.cpp
@@ -178,6 +181,9 @@ add_library(obliterator_core STATIC
     src/media_cleaner.cpp
     src/dcom_cleaner.cpp
     src/aedebug_cleaner.cpp
+    src/namespace_cleaner.cpp
+    src/wsl_cleaner.cpp
+    src/terminal_cleaner.cpp
 )
 
 target_include_directories(obliterator_core PUBLIC

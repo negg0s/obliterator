@@ -23,6 +23,7 @@
 #include "obliterator/log.hpp"
 #include "obliterator/media_cleaner.hpp"
 #include "obliterator/msi_cleaner.hpp"
+#include "obliterator/namespace_cleaner.hpp"
 #include "obliterator/notification_cleaner.hpp"
 #include "obliterator/plan.hpp"
 #include "obliterator/power_cleaner.hpp"
@@ -30,9 +31,11 @@
 #include "obliterator/proxy_cleaner.hpp"
 #include "obliterator/csp_cleaner.hpp"
 #include "obliterator/recent_apps_cleaner.hpp"
+#include "obliterator/terminal_cleaner.hpp"
 #include "obliterator/user_assist_cleaner.hpp"
 #include "obliterator/wer_cleaner.hpp"
 #include "obliterator/wfp_cleaner.hpp"
+#include "obliterator/wsl_cleaner.hpp"
 #include "obliterator/process.hpp"
 #include "obliterator/profile.hpp"
 #include "obliterator/quarantine.hpp"
@@ -646,6 +649,25 @@ FinalReport execute_obliteration(
     const auto aedebug_rep = AeDebugCleaner::clean_aedebug(target, options.dry_run);
     if (aedebug_rep.aedebug_hooks_reset > 0) {
         emit_log(L"Reset " + std::to_wstring(aedebug_rep.aedebug_hooks_reset) + L" AeDebug crash handler hooks.");
+    }
+
+    // Clean Windows Explorer Desktop and MyComputer NameSpace extensions
+    const auto ns_rep = NamespaceCleaner::clean_namespace_extensions(target, options.dry_run);
+    if (ns_rep.mycomputer_entries_removed > 0 || ns_rep.desktop_entries_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(ns_rep.mycomputer_entries_removed) + L" MyComputer NameSpace and " +
+                 std::to_wstring(ns_rep.desktop_entries_removed) + L" Desktop NameSpace extensions.");
+    }
+
+    // Clean Windows Subsystem for Linux (WSL) distributions
+    const auto wsl_rep = WslCleaner::clean_wsl_distros(target, options.dry_run);
+    if (wsl_rep.distros_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(wsl_rep.distros_removed) + L" WSL distributions.");
+    }
+
+    // Clean Windows Terminal JSON fragment extensions
+    const auto term_rep = TerminalCleaner::clean_terminal_fragments(target, options.dry_run);
+    if (term_rep.fragment_folders_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(term_rep.fragment_folders_removed) + L" Windows Terminal fragment folders.");
     }
 
     namespace fs = std::filesystem;

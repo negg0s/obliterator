@@ -62,6 +62,9 @@
 #include "obliterator/media_cleaner.hpp"
 #include "obliterator/dcom_cleaner.hpp"
 #include "obliterator/aedebug_cleaner.hpp"
+#include "obliterator/namespace_cleaner.hpp"
+#include "obliterator/wsl_cleaner.hpp"
+#include "obliterator/terminal_cleaner.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
@@ -2685,6 +2688,100 @@ static void test_aedebug_cleaner() {
     RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows NT");
 }
 
+static void test_namespace_cleaner() {
+    Target target;
+    target.name = L"MockCloudSync";
+    target.root_path = L"C:\\Program Files\\MockCloudSync";
+
+    const std::wstring mc_key = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{C3D4E5F6-A7B8-9012-3456-789ABCDEF012}";
+    const std::wstring dt_key = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Desktop\\NameSpace\\{D4E5F6A7-B8C9-0123-4567-89ABCDEF0123}";
+
+    UniqueHKey hMc, hDt;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, mc_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hMc.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring desc = L"MockCloudSync Drive";
+        RegSetValueExW(hMc.get(), nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(desc.c_str()), static_cast<DWORD>((desc.size() + 1) * sizeof(wchar_t)));
+    }
+
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, dt_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hDt.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring desc = L"MockCloudSync Desktop Icon";
+        RegSetValueExW(hDt.get(), nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(desc.c_str()), static_cast<DWORD>((desc.size() + 1) * sizeof(wchar_t)));
+    }
+
+    auto dry_rep = NamespaceCleaner::clean_namespace_extensions(target, true);
+    check(dry_rep.mycomputer_entries_removed >= 1, "NamespaceCleaner dry run detected mock MyComputer namespace");
+    check(dry_rep.desktop_entries_removed >= 1, "NamespaceCleaner dry run detected mock Desktop namespace");
+
+    auto live_rep = NamespaceCleaner::clean_namespace_extensions(target, false);
+    check(live_rep.mycomputer_entries_removed >= 1, "NamespaceCleaner live removed mock MyComputer namespace");
+    check(live_rep.desktop_entries_removed >= 1, "NamespaceCleaner live removed mock Desktop namespace");
+
+    UniqueHKey hVerify;
+    LSTATUS s1 = RegOpenKeyExW(HKEY_CURRENT_USER, mc_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s1 != ERROR_SUCCESS, "mock MyComputer NameSpace key deleted from registry");
+
+    hVerify.reset();
+    LSTATUS s2 = RegOpenKeyExW(HKEY_CURRENT_USER, dt_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s2 != ERROR_SUCCESS, "mock Desktop NameSpace key deleted from registry");
+
+    // Cleanup parent mock keys
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Desktop\\NameSpace");
+}
+
+static void test_wsl_cleaner() {
+    Target target;
+    target.name = L"MockDockerApp";
+    target.root_path = L"C:\\Program Files\\MockDockerApp";
+
+    const std::wstring distro_key = L"Software\\Microsoft\\Windows\\CurrentVersion\\Lxss\\{E5F6A7B8-C9D0-1234-5678-9ABCDEF01234}";
+    UniqueHKey hDistro;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, distro_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hDistro.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring dname = L"mockdocker-desktop";
+        RegSetValueExW(hDistro.get(), L"DistributionName", 0, REG_SZ, reinterpret_cast<const BYTE*>(dname.c_str()), static_cast<DWORD>((dname.size() + 1) * sizeof(wchar_t)));
+        const std::wstring base = L"C:\\Program Files\\MockDockerApp\\wsl";
+        RegSetValueExW(hDistro.get(), L"BasePath", 0, REG_SZ, reinterpret_cast<const BYTE*>(base.c_str()), static_cast<DWORD>((base.size() + 1) * sizeof(wchar_t)));
+    }
+
+    auto dry_rep = WslCleaner::clean_wsl_distros(target, true);
+    check(dry_rep.distros_removed >= 1, "WslCleaner dry run detected mock WSL distro");
+
+    auto live_rep = WslCleaner::clean_wsl_distros(target, false);
+    check(live_rep.distros_removed >= 1, "WslCleaner live removed mock WSL distro");
+
+    UniqueHKey hVerify;
+    LSTATUS s = RegOpenKeyExW(HKEY_CURRENT_USER, distro_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s != ERROR_SUCCESS, "mock WSL distro key deleted from registry");
+
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Lxss");
+}
+
+static void test_terminal_cleaner() {
+    Target target;
+    target.name = L"MockTerminalApp";
+    target.root_path = L"C:\\Program Files\\MockTerminalApp";
+
+    wchar_t local_app_data[MAX_PATH] = { 0 };
+    if (GetEnvironmentVariableW(L"LOCALAPPDATA", local_app_data, MAX_PATH) > 0) {
+        namespace fs = std::filesystem;
+        const fs::path frag_dir = fs::path(local_app_data) / L"Microsoft" / L"Windows Terminal" / L"Fragments" / L"MockTerminalApp";
+        std::error_code ec;
+        fs::create_directories(frag_dir, ec);
+
+        std::ofstream json_out(frag_dir / L"profile.json");
+        json_out << "{\"profiles\": [{\"commandline\": \"C:\\\\Program Files\\\\MockTerminalApp\\\\bin\\\\cli.exe\"}]}\n";
+        json_out.close();
+
+        auto dry_rep = TerminalCleaner::clean_terminal_fragments(target, true);
+        check(dry_rep.fragment_folders_removed >= 1, "TerminalCleaner dry run detected mock terminal fragment");
+
+        auto live_rep = TerminalCleaner::clean_terminal_fragments(target, false);
+        check(live_rep.fragment_folders_removed >= 1, "TerminalCleaner live removed mock terminal fragment");
+
+        check(!fs::exists(frag_dir, ec), "mock terminal fragment folder deleted from disk");
+    }
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -2838,6 +2935,12 @@ int main() {
     test_dcom_cleaner();
     std::wcout << L"[RUN] test_aedebug_cleaner\n" << std::flush;
     test_aedebug_cleaner();
+    std::wcout << L"[RUN] test_namespace_cleaner\n" << std::flush;
+    test_namespace_cleaner();
+    std::wcout << L"[RUN] test_wsl_cleaner\n" << std::flush;
+    test_wsl_cleaner();
+    std::wcout << L"[RUN] test_terminal_cleaner\n" << std::flush;
+    test_terminal_cleaner();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;
