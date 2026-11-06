@@ -1,7 +1,9 @@
 #include "obliterator/executor.hpp"
 
 #include "obliterator/ads.hpp"
+#include "obliterator/app_compat_cleaner.hpp"
 #include "obliterator/association_cleaner.hpp"
+#include "obliterator/bits_cleaner.hpp"
 #include "obliterator/cert_cleaner.hpp"
 #include "obliterator/confidence_engine.hpp"
 #include "obliterator/defuse.hpp"
@@ -11,6 +13,7 @@
 #include "obliterator/leftovers.hpp"
 #include "obliterator/log.hpp"
 #include "obliterator/msi_cleaner.hpp"
+#include "obliterator/notification_cleaner.hpp"
 #include "obliterator/plan.hpp"
 #include "obliterator/wer_cleaner.hpp"
 #include "obliterator/wfp_cleaner.hpp"
@@ -507,6 +510,27 @@ FinalReport execute_obliteration(
         emit_log(L"Cleaned " + std::to_wstring(wer_rep.local_dumps_keys_removed) + L" WER dump configs, " +
                  std::to_wstring(wer_rep.crash_dumps_deleted) + L" crash dumps, and " +
                  std::to_wstring(wer_rep.wer_reports_deleted) + L" report folders.");
+    }
+
+    // Clean Application Compatibility (AppCompat) Layers and PCA Store
+    const auto comp_rep = AppCompatCleaner::clean_app_compat(target, options.dry_run);
+    if (comp_rep.layers_values_removed > 0 || comp_rep.store_values_removed > 0 || comp_rep.custom_keys_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(comp_rep.layers_values_removed) + L" AppCompat layers, " +
+                 std::to_wstring(comp_rep.store_values_removed) + L" PCA store entries, and " +
+                 std::to_wstring(comp_rep.custom_keys_removed) + L" custom SDB entries.");
+    }
+
+    // Clean Action Center notification settings and ghost StartupApproved entries
+    const auto notif_rep = NotificationCleaner::clean_notifications_and_startup(target, options.dry_run);
+    if (notif_rep.notification_settings_removed > 0 || notif_rep.startup_approved_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(notif_rep.notification_settings_removed) + L" notification settings and " +
+                 std::to_wstring(notif_rep.startup_approved_removed) + L" StartupApproved entries.");
+    }
+
+    // Clean Background Intelligent Transfer Service (BITS) queued/orphaned jobs
+    const auto bits_rep = BitsCleaner::clean_bits_jobs(target, options.dry_run);
+    if (bits_rep.jobs_cancelled > 0) {
+        emit_log(L"Cancelled " + std::to_wstring(bits_rep.jobs_cancelled) + L" orphaned BITS background jobs.");
     }
 
     namespace fs = std::filesystem;

@@ -44,6 +44,9 @@
 #include "obliterator/association_cleaner.hpp"
 #include "obliterator/event_log_cleaner.hpp"
 #include "obliterator/wer_cleaner.hpp"
+#include "obliterator/app_compat_cleaner.hpp"
+#include "obliterator/notification_cleaner.hpp"
+#include "obliterator/bits_cleaner.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
@@ -2118,6 +2121,87 @@ static void test_wer_cleaner() {
     check(s != ERROR_SUCCESS, "mock LocalDumps key deleted from registry");
 }
 
+static void test_app_compat_cleaner() {
+    Target target;
+    target.name = L"MockCompatApp";
+    target.root_path = L"C:\\Program Files\\MockCompatApp";
+
+    const std::wstring layers_key = L"Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers";
+    UniqueHKey hLayers;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, layers_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hLayers.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring val_name = target.root_path + L"\\app.exe";
+        const std::wstring val_data = L"~ RUNASADMIN WIN8RTM";
+        RegSetValueExW(hLayers.get(), val_name.c_str(), 0, REG_SZ, reinterpret_cast<const BYTE*>(val_data.c_str()), static_cast<DWORD>((val_data.size() + 1) * sizeof(wchar_t)));
+    }
+
+    // Dry run
+    auto dry_rep = AppCompatCleaner::clean_app_compat(target, true);
+    check(dry_rep.layers_values_removed >= 1, "AppCompatCleaner dry run detected mock Layers value");
+
+    // Live run
+    auto live_rep = AppCompatCleaner::clean_app_compat(target, false);
+    check(live_rep.layers_values_removed >= 1, "AppCompatCleaner live removed mock Layers value");
+
+    // Verify value was deleted
+    UniqueHKey hVerify;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, layers_key.c_str(), 0, KEY_READ, hVerify.put()) == ERROR_SUCCESS) {
+        const std::wstring val_name = target.root_path + L"\\app.exe";
+        LSTATUS st = RegQueryValueExW(hVerify.get(), val_name.c_str(), nullptr, nullptr, nullptr, nullptr);
+        check(st != ERROR_SUCCESS, "mock Layers value deleted from registry");
+    }
+}
+
+static void test_notification_cleaner() {
+    Target target;
+    target.name = L"MockNotifApp";
+    target.root_path = L"C:\\Program Files\\MockNotifApp";
+
+    // 1. Create mock notification setting in HKCU
+    const std::wstring notif_key = L"Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings\\MockNotifApp.AUMID.1";
+    UniqueHKey hNotif;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, notif_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hNotif.put(), nullptr) == ERROR_SUCCESS) {
+        DWORD enabled = 1;
+        RegSetValueExW(hNotif.get(), L"Enabled", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&enabled), sizeof(DWORD));
+    }
+
+    // 2. Create mock StartupApproved value in HKCU
+    const std::wstring startup_key = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
+    UniqueHKey hStartup;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, startup_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hStartup.put(), nullptr) == ERROR_SUCCESS) {
+        BYTE dummy_bytes[12] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+        RegSetValueExW(hStartup.get(), L"MockNotifApp", 0, REG_BINARY, dummy_bytes, sizeof(dummy_bytes));
+    }
+
+    // Dry run
+    auto dry_rep = NotificationCleaner::clean_notifications_and_startup(target, true);
+    check(dry_rep.notification_settings_removed >= 1, "NotificationCleaner dry run detected mock notification setting");
+    check(dry_rep.startup_approved_removed >= 1, "NotificationCleaner dry run detected mock StartupApproved value");
+
+    // Live run
+    auto live_rep = NotificationCleaner::clean_notifications_and_startup(target, false);
+    check(live_rep.notification_settings_removed >= 1, "NotificationCleaner live removed mock notification setting");
+    check(live_rep.startup_approved_removed >= 1, "NotificationCleaner live removed mock StartupApproved value");
+
+    // Verify key was deleted
+    UniqueHKey hVerify;
+    LSTATUS s1 = RegOpenKeyExW(HKEY_CURRENT_USER, notif_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s1 != ERROR_SUCCESS, "mock notification key deleted from registry");
+    hVerify.reset();
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, startup_key.c_str(), 0, KEY_READ, hVerify.put()) == ERROR_SUCCESS) {
+        LSTATUS s2 = RegQueryValueExW(hVerify.get(), L"MockNotifApp", nullptr, nullptr, nullptr, nullptr);
+        check(s2 != ERROR_SUCCESS, "mock StartupApproved value deleted from registry");
+    }
+}
+
+static void test_bits_cleaner() {
+    Target dummy;
+    dummy.name = L"NonExistentBits987";
+    dummy.root_path = L"C:\\Program Files\\NonExistentBits987";
+
+    auto rep = BitsCleaner::clean_bits_jobs(dummy, true);
+    check(rep.jobs_cancelled == 0, "clean_bits_jobs on non-existent target returns 0 cancelled jobs");
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -2235,6 +2319,12 @@ int main() {
     test_event_log_cleaner();
     std::wcout << L"[RUN] test_wer_cleaner\n" << std::flush;
     test_wer_cleaner();
+    std::wcout << L"[RUN] test_app_compat_cleaner\n" << std::flush;
+    test_app_compat_cleaner();
+    std::wcout << L"[RUN] test_notification_cleaner\n" << std::flush;
+    test_notification_cleaner();
+    std::wcout << L"[RUN] test_bits_cleaner\n" << std::flush;
+    test_bits_cleaner();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;

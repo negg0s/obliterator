@@ -96,6 +96,9 @@ add_library(obliterator_core STATIC
     include/obliterator/association_cleaner.hpp
     include/obliterator/event_log_cleaner.hpp
     include/obliterator/wer_cleaner.hpp
+    include/obliterator/app_compat_cleaner.hpp
+    include/obliterator/notification_cleaner.hpp
+    include/obliterator/bits_cleaner.hpp
     src/cli.cpp
     src/confidence_engine.cpp
     src/defuse.cpp
@@ -142,6 +145,9 @@ add_library(obliterator_core STATIC
     src/association_cleaner.cpp
     src/event_log_cleaner.cpp
     src/wer_cleaner.cpp
+    src/app_compat_cleaner.cpp
+    src/notification_cleaner.cpp
+    src/bits_cleaner.cpp
 )
 
 target_include_directories(obliterator_core PUBLIC
