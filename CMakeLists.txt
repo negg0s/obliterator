@@ -120,6 +120,9 @@ add_library(obliterator_core STATIC
     include/obliterator/winsock_cleaner.hpp
     include/obliterator/autoplay_cleaner.hpp
     include/obliterator/search_handler_cleaner.hpp
+    include/obliterator/app_alias_cleaner.hpp
+    include/obliterator/credential_provider_cleaner.hpp
+    include/obliterator/sdb_cleaner.hpp
     src/cli.cpp
     src/confidence_engine.cpp
     src/defuse.cpp
@@ -190,6 +193,9 @@ add_library(obliterator_core STATIC
     src/winsock_cleaner.cpp
     src/autoplay_cleaner.cpp
     src/search_handler_cleaner.cpp
+    src/app_alias_cleaner.cpp
+    src/credential_provider_cleaner.cpp
+    src/sdb_cleaner.cpp
 )
 
 target_include_directories(obliterator_core PUBLIC

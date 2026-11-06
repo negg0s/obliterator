@@ -2,6 +2,7 @@
 
 #include "obliterator/ads.hpp"
 #include "obliterator/aedebug_cleaner.hpp"
+#include "obliterator/app_alias_cleaner.hpp"
 #include "obliterator/app_compat_cleaner.hpp"
 #include "obliterator/association_cleaner.hpp"
 #include "obliterator/audio_cleaner.hpp"
@@ -11,6 +12,7 @@
 #include "obliterator/comdlg_cleaner.hpp"
 #include "obliterator/confidence_engine.hpp"
 #include "obliterator/console_cleaner.hpp"
+#include "obliterator/credential_provider_cleaner.hpp"
 #include "obliterator/csp_cleaner.hpp"
 #include "obliterator/dcom_cleaner.hpp"
 #include "obliterator/defender_cleaner.hpp"
@@ -31,6 +33,7 @@
 #include "obliterator/print_cleaner.hpp"
 #include "obliterator/proxy_cleaner.hpp"
 #include "obliterator/recent_apps_cleaner.hpp"
+#include "obliterator/sdb_cleaner.hpp"
 #include "obliterator/search_handler_cleaner.hpp"
 #include "obliterator/terminal_cleaner.hpp"
 #include "obliterator/user_assist_cleaner.hpp"
@@ -689,6 +692,28 @@ FinalReport execute_obliteration(
     const auto sh_rep = SearchHandlerCleaner::clean_search_handlers(target, options.dry_run);
     if (sh_rep.protocol_handlers_removed > 0) {
         emit_log(L"Cleaned " + std::to_wstring(sh_rep.protocol_handlers_removed) + L" Windows Search protocol handlers.");
+    }
+
+    // Clean Windows App Execution Aliases
+    const auto alias_rep = AppAliasCleaner::clean_app_aliases(target, options.dry_run);
+    if (alias_rep.registry_aliases_removed > 0 || alias_rep.file_aliases_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(alias_rep.registry_aliases_removed) + L" App Execution Aliases and " +
+                 std::to_wstring(alias_rep.file_aliases_removed) + L" alias execution files.");
+    }
+
+    // Clean orphaned custom Credential Providers
+    const auto cred_rep = CredentialProviderCleaner::clean_credential_providers(target, options.dry_run);
+    if (cred_rep.providers_removed > 0 || cred_rep.filters_removed > 0 || cred_rep.plap_providers_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(cred_rep.providers_removed) + L" Credential Providers, " +
+                 std::to_wstring(cred_rep.filters_removed) + L" filters, and " +
+                 std::to_wstring(cred_rep.plap_providers_removed) + L" PLAP providers.");
+    }
+
+    // Clean orphaned Application Compatibility SDB shim databases
+    const auto sdb_rep = SdbCleaner::clean_sdb_shims(target, options.dry_run);
+    if (sdb_rep.sdb_entries_removed > 0 || sdb_rep.custom_hooks_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(sdb_rep.sdb_entries_removed) + L" installed SDB shims and " +
+                 std::to_wstring(sdb_rep.custom_hooks_removed) + L" custom hooks.");
     }
 
     namespace fs = std::filesystem;

@@ -68,6 +68,9 @@
 #include "obliterator/winsock_cleaner.hpp"
 #include "obliterator/autoplay_cleaner.hpp"
 #include "obliterator/search_handler_cleaner.hpp"
+#include "obliterator/app_alias_cleaner.hpp"
+#include "obliterator/credential_provider_cleaner.hpp"
+#include "obliterator/sdb_cleaner.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
@@ -2903,6 +2906,114 @@ static void test_search_handler_cleaner() {
     RegDeleteKeyW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows Search");
 }
 
+static void test_app_alias_cleaner() {
+    Target target;
+    target.name = L"MockAliasApp";
+    target.root_path = L"C:\\Program Files\\MockAliasApp";
+
+    const std::wstring alias_parent = L"Software\\Microsoft\\Windows\\CurrentVersion\\AppExecutionAlias";
+    const std::wstring alias_key = alias_parent + L"\\mockaliasapp.exe";
+
+    UniqueHKey hSub;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, alias_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hSub.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring pfn = L"MockAliasApp_8wekyb3d8bbwe";
+        RegSetValueExW(hSub.get(), L"PackageFamilyName", 0, REG_SZ,
+                       reinterpret_cast<const BYTE*>(pfn.c_str()),
+                       static_cast<DWORD>((pfn.size() + 1) * sizeof(wchar_t)));
+    }
+
+    auto dry_rep = AppAliasCleaner::clean_app_aliases(target, true);
+    check(dry_rep.registry_aliases_removed >= 1, "AppAliasCleaner dry run detected mock execution alias");
+
+    auto live_rep = AppAliasCleaner::clean_app_aliases(target, false);
+    check(live_rep.registry_aliases_removed >= 1, "AppAliasCleaner live removed mock execution alias");
+
+    UniqueHKey hVerify;
+    LSTATUS s = RegOpenKeyExW(HKEY_CURRENT_USER, alias_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s != ERROR_SUCCESS, "mock execution alias deleted from registry");
+
+    RegDeleteKeyW(HKEY_CURRENT_USER, alias_key.c_str());
+}
+
+static void test_credential_provider_cleaner() {
+    Target target;
+    target.name = L"MockSSOApp";
+    target.root_path = L"C:\\Program Files\\MockSSOApp";
+
+    const std::wstring cred_parent = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers";
+    const std::wstring cred_key = cred_parent + L"\\{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}";
+
+    UniqueHKey hSub;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, cred_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hSub.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring desc = L"MockSSOApp Logon Provider";
+        RegSetValueExW(hSub.get(), nullptr, 0, REG_SZ,
+                       reinterpret_cast<const BYTE*>(desc.c_str()),
+                       static_cast<DWORD>((desc.size() + 1) * sizeof(wchar_t)));
+    }
+
+    auto dry_rep = CredentialProviderCleaner::clean_credential_providers(target, true);
+    check(dry_rep.providers_removed >= 1, "CredentialProviderCleaner dry run detected mock provider");
+
+    auto live_rep = CredentialProviderCleaner::clean_credential_providers(target, false);
+    check(live_rep.providers_removed >= 1, "CredentialProviderCleaner live removed mock provider");
+
+    UniqueHKey hVerify;
+    LSTATUS s = RegOpenKeyExW(HKEY_CURRENT_USER, cred_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s != ERROR_SUCCESS, "mock credential provider deleted from registry");
+
+    RegDeleteKeyW(HKEY_CURRENT_USER, cred_key.c_str());
+    RegDeleteKeyW(HKEY_CURRENT_USER, cred_parent.c_str());
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication");
+}
+
+static void test_sdb_cleaner() {
+    Target target;
+    target.name = L"MockGameApp";
+    target.root_path = L"C:\\Program Files\\MockGameApp";
+
+    const std::wstring sdb_parent = L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\InstalledSDB";
+    const std::wstring sdb_key = sdb_parent + L"\\{F1E2D3C4-B5A6-0987-6543-21FEDCBA0987}";
+    const std::wstring custom_parent = L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Custom";
+    const std::wstring custom_key = custom_parent + L"\\mockgameapp.exe";
+
+    UniqueHKey hSub;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, sdb_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hSub.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring desc = L"MockGameApp Compatibility Fix";
+        RegSetValueExW(hSub.get(), L"DatabaseDescription", 0, REG_SZ,
+                       reinterpret_cast<const BYTE*>(desc.c_str()),
+                       static_cast<DWORD>((desc.size() + 1) * sizeof(wchar_t)));
+    }
+
+    UniqueHKey hCustom;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, custom_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hCustom.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring sdb_guid = L"{F1E2D3C4-B5A6-0987-6543-21FEDCBA0987}";
+        RegSetValueExW(hCustom.get(), sdb_guid.c_str(), 0, REG_SZ,
+                       reinterpret_cast<const BYTE*>(sdb_guid.c_str()),
+                       static_cast<DWORD>((sdb_guid.size() + 1) * sizeof(wchar_t)));
+    }
+
+    auto dry_rep = SdbCleaner::clean_sdb_shims(target, true);
+    check(dry_rep.sdb_entries_removed >= 1 || dry_rep.custom_hooks_removed >= 1, "SdbCleaner dry run detected mock sdb entries");
+
+    auto live_rep = SdbCleaner::clean_sdb_shims(target, false);
+    check(live_rep.sdb_entries_removed >= 1, "SdbCleaner live removed mock sdb entry");
+    check(live_rep.custom_hooks_removed >= 1, "SdbCleaner live removed mock custom hook");
+
+    UniqueHKey hVerify;
+    LSTATUS s1 = RegOpenKeyExW(HKEY_CURRENT_USER, sdb_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s1 != ERROR_SUCCESS, "mock installed SDB deleted from registry");
+
+    hVerify.reset();
+    LSTATUS s2 = RegOpenKeyExW(HKEY_CURRENT_USER, custom_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s2 != ERROR_SUCCESS, "mock custom hook deleted from registry");
+
+    RegDeleteKeyW(HKEY_CURRENT_USER, sdb_key.c_str());
+    RegDeleteKeyW(HKEY_CURRENT_USER, sdb_parent.c_str());
+    RegDeleteKeyW(HKEY_CURRENT_USER, custom_key.c_str());
+    RegDeleteKeyW(HKEY_CURRENT_USER, custom_parent.c_str());
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags");
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -3068,6 +3179,12 @@ int main() {
     test_autoplay_cleaner();
     std::wcout << L"[RUN] test_search_handler_cleaner\n" << std::flush;
     test_search_handler_cleaner();
+    std::wcout << L"[RUN] test_app_alias_cleaner\n" << std::flush;
+    test_app_alias_cleaner();
+    std::wcout << L"[RUN] test_credential_provider_cleaner\n" << std::flush;
+    test_credential_provider_cleaner();
+    std::wcout << L"[RUN] test_sdb_cleaner\n" << std::flush;
+    test_sdb_cleaner();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;
