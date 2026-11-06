@@ -1,6 +1,7 @@
 #include "obliterator/executor.hpp"
 
 #include "obliterator/ads.hpp"
+#include "obliterator/cert_cleaner.hpp"
 #include "obliterator/confidence_engine.hpp"
 #include "obliterator/defuse.hpp"
 #include "obliterator/driver_cleaner.hpp"
@@ -9,6 +10,7 @@
 #include "obliterator/log.hpp"
 #include "obliterator/msi_cleaner.hpp"
 #include "obliterator/plan.hpp"
+#include "obliterator/wfp_cleaner.hpp"
 #include "obliterator/process.hpp"
 #include "obliterator/profile.hpp"
 #include "obliterator/quarantine.hpp"
@@ -467,6 +469,19 @@ FinalReport execute_obliteration(
     final_report.shortcuts_deleted = left_report.shortcuts_deleted;
     final_report.firewall_rules_deleted = left_report.firewall_rules_deleted;
     final_report.possible_leftovers_skipped = left_report.possible_leftovers_skipped;
+
+    // Clean Windows Filtering Platform (WFP) network filters & providers
+    const auto wfp_rep = WfpCleaner::clean_wfp_artifacts(target, options.dry_run);
+    if (wfp_rep.filters_removed > 0 || wfp_rep.providers_removed > 0) {
+        emit_log(L"Purged " + std::to_wstring(wfp_rep.filters_removed) + L" WFP network filters and " +
+                 std::to_wstring(wfp_rep.providers_removed) + L" WFP providers.");
+    }
+
+    // Clean certificates from Root, CA, and Publisher stores
+    const auto cert_rep = CertificateCleaner::clean_certificates(target, options.dry_run);
+    if (cert_rep.certificates_removed > 0) {
+        emit_log(L"Purged " + std::to_wstring(cert_rep.certificates_removed) + L" certificates from system store.");
+    }
 
     namespace fs = std::filesystem;
     for (const auto& prof : target_profiles) {

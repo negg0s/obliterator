@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Windows Installer package cache cleaner (`MsiCacheCleaner`): resolves product codes using packed GUID transposition algorithms, unlinks cached `.msi` installers from `%SystemRoot%\Installer`, and deregisters entries in `UserData\S-1-5-18\Products` and `HKCR\Installer`.
 - OEM DriverStore package uninstaller (`DriverCleaner`): inspects `%SystemRoot%\INF\oem*.inf` metadata for matched service binaries, catalog hashes, and vendor names, triggering forced driver deregistration via `SetupUninstallOEMInfW` (`SUOI_FORCEDELETE`) with protected hardware vendor guards.
 - NTFS Alternate Data Stream purger (`AdsHelper`): discovers and unlinks secondary data streams (`:Zone.Identifier`, `:favicon`, hidden metadata streams) via `FindFirstStreamW` during directory wipes.
+- Windows Filtering Platform network cleaner (`WfpCleaner`): queries and removes orphaned WFP callout filters and providers registered by VPNs, ad-blockers, and firewalls via dynamic loading of `fwpuclnt.dll` (`FwpmEngineOpen0`, `FwpmFilterDeleteById0`, `FwpmProviderDeleteByKey0`) with protected system filter filtering.
+- Windows Cryptographic Certificate & Root Store cleaner (`CertificateCleaner`): enumerates and removes custom Root CAs, intermediate authorities, and publisher certificates from LocalMachine and CurrentUser certificate stores (`ROOT`, `CA`, `TrustedPublisher`, `MY`) using `crypt32.dll`, protecting trusted public root certificates.
 
 ## [0.2.0] - 2026-11-04
 

@@ -39,6 +39,8 @@
 #include "obliterator/msi_cleaner.hpp"
 #include "obliterator/driver_cleaner.hpp"
 #include "obliterator/ads.hpp"
+#include "obliterator/cert_cleaner.hpp"
+#include "obliterator/wfp_cleaner.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
@@ -1985,6 +1987,49 @@ static void test_ads_helper() {
     fs::remove(test_file, ec);
 }
 
+static void test_cert_cleaner() {
+    // 1. Verify protected root CAs
+    check(CertificateCleaner::is_protected_root_ca(L"Microsoft Root Certificate Authority 2011"), "Microsoft root CA is protected");
+    check(CertificateCleaner::is_protected_root_ca(L"DigiCert High Assurance EV Root CA"), "DigiCert root CA is protected");
+    check(CertificateCleaner::is_protected_root_ca(L"Let's Encrypt Authority X3"), "Let's Encrypt CA is protected");
+    check(!CertificateCleaner::is_protected_root_ca(L"UntrustedCorp Local Proxy Root CA"), "UntrustedCorp is not protected");
+
+    // 2. Discover on non-existent app returns empty
+    Target dummy;
+    dummy.name = L"NonExistentAppZ987";
+    dummy.publisher = L"NonExistentPubX123";
+    auto certs = CertificateCleaner::discover_target_certificates(dummy);
+    check(certs.empty(), "discovery on non-existent app returns empty list");
+
+    // 3. Dry-run mock purge
+    DiscoveredCertificate mock_cert;
+    mock_cert.store_name = L"ROOT";
+    mock_cert.is_local_machine = false;
+    mock_cert.subject_name = L"Mock Proxy CA";
+    mock_cert.sha1_thumbprint = L"0123456789ABCDEF0123456789ABCDEF01234567";
+    size_t purged = CertificateCleaner::purge_certificate(mock_cert, true);
+    check(purged == 1, "certificate purge dry run returns 1");
+}
+
+static void test_wfp_cleaner() {
+    // 1. Availability check
+    bool available = WfpCleaner::is_wfp_available();
+    check(available, "WFP API is available in fwpuclnt.dll");
+
+    // 2. Discover on non-existent target
+    Target dummy;
+    dummy.name = L"NonExistentVpn987";
+    dummy.publisher = L"NonExistentVpnVendor123";
+    auto provs = WfpCleaner::discover_providers(dummy);
+    check(provs.empty(), "discovery on non-existent target returns empty providers");
+    auto filters = WfpCleaner::discover_filters(dummy);
+    check(filters.empty(), "discovery on non-existent target returns empty filters");
+
+    // 3. Dry-run cleanup returns 0 for empty discoveries
+    auto rep = WfpCleaner::clean_wfp_artifacts(dummy, true);
+    check(rep.filters_removed == 0 && rep.providers_removed == 0, "dry run on empty target returns 0 removals");
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -2092,6 +2137,10 @@ int main() {
     test_driver_cleaner();
     std::wcout << L"[RUN] test_ads_helper\n" << std::flush;
     test_ads_helper();
+    std::wcout << L"[RUN] test_cert_cleaner\n" << std::flush;
+    test_cert_cleaner();
+    std::wcout << L"[RUN] test_wfp_cleaner\n" << std::flush;
+    test_wfp_cleaner();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;

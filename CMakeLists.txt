@@ -91,6 +91,8 @@ add_library(obliterator_core STATIC
     include/obliterator/msi_cleaner.hpp
     include/obliterator/driver_cleaner.hpp
     include/obliterator/ads.hpp
+    include/obliterator/cert_cleaner.hpp
+    include/obliterator/wfp_cleaner.hpp
     src/cli.cpp
     src/confidence_engine.cpp
     src/defuse.cpp
@@ -132,6 +134,8 @@ add_library(obliterator_core STATIC
     src/msi_cleaner.cpp
     src/driver_cleaner.cpp
     src/ads.cpp
+    src/cert_cleaner.cpp
+    src/wfp_cleaner.cpp
 )
 
 target_include_directories(obliterator_core PUBLIC
@@ -141,6 +145,7 @@ target_include_directories(obliterator_core PUBLIC
 target_link_libraries(obliterator_core PUBLIC
     advapi32
     bcrypt
+    crypt32
     ntdll
     rstrtmgr
     taskschd
