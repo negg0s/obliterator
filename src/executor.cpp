@@ -10,11 +10,14 @@
 #include "obliterator/driver_cleaner.hpp"
 #include "obliterator/error.hpp"
 #include "obliterator/event_log_cleaner.hpp"
+#include "obliterator/ifeo_cleaner.hpp"
 #include "obliterator/leftovers.hpp"
 #include "obliterator/log.hpp"
 #include "obliterator/msi_cleaner.hpp"
 #include "obliterator/notification_cleaner.hpp"
 #include "obliterator/plan.hpp"
+#include "obliterator/power_cleaner.hpp"
+#include "obliterator/recent_apps_cleaner.hpp"
 #include "obliterator/wer_cleaner.hpp"
 #include "obliterator/wfp_cleaner.hpp"
 #include "obliterator/process.hpp"
@@ -531,6 +534,25 @@ FinalReport execute_obliteration(
     const auto bits_rep = BitsCleaner::clean_bits_jobs(target, options.dry_run);
     if (bits_rep.jobs_cancelled > 0) {
         emit_log(L"Cancelled " + std::to_wstring(bits_rep.jobs_cancelled) + L" orphaned BITS background jobs.");
+    }
+
+    // Clean Image File Execution Options (IFEO) target keys and debugger hooks
+    const auto ifeo_rep = IfeoCleaner::clean_ifeo_entries(target, options.dry_run);
+    if (ifeo_rep.target_keys_removed > 0 || ifeo_rep.debugger_hooks_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(ifeo_rep.target_keys_removed) + L" IFEO keys and " +
+                 std::to_wstring(ifeo_rep.debugger_hooks_removed) + L" IFEO debugger hooks.");
+    }
+
+    // Clean Windows Power Request Overrides preventing system sleep
+    const auto power_rep = PowerCleaner::clean_power_overrides(target, options.dry_run);
+    if (power_rep.power_overrides_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(power_rep.power_overrides_removed) + L" PowerRequestOverrides.");
+    }
+
+    // Clean Windows Search RecentApps entries
+    const auto recent_rep = RecentAppsCleaner::clean_recent_apps(target, options.dry_run);
+    if (recent_rep.recent_apps_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(recent_rep.recent_apps_removed) + L" RecentApps entries.");
     }
 
     namespace fs = std::filesystem;

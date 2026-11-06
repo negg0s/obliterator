@@ -99,6 +99,9 @@ add_library(obliterator_core STATIC
     include/obliterator/app_compat_cleaner.hpp
     include/obliterator/notification_cleaner.hpp
     include/obliterator/bits_cleaner.hpp
+    include/obliterator/ifeo_cleaner.hpp
+    include/obliterator/power_cleaner.hpp
+    include/obliterator/recent_apps_cleaner.hpp
     src/cli.cpp
     src/confidence_engine.cpp
     src/defuse.cpp
@@ -148,6 +151,9 @@ add_library(obliterator_core STATIC
     src/app_compat_cleaner.cpp
     src/notification_cleaner.cpp
     src/bits_cleaner.cpp
+    src/ifeo_cleaner.cpp
+    src/power_cleaner.cpp
+    src/recent_apps_cleaner.cpp
 )
 
 target_include_directories(obliterator_core PUBLIC

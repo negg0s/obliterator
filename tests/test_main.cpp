@@ -47,6 +47,9 @@
 #include "obliterator/app_compat_cleaner.hpp"
 #include "obliterator/notification_cleaner.hpp"
 #include "obliterator/bits_cleaner.hpp"
+#include "obliterator/ifeo_cleaner.hpp"
+#include "obliterator/power_cleaner.hpp"
+#include "obliterator/recent_apps_cleaner.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
@@ -2202,6 +2205,53 @@ static void test_bits_cleaner() {
     check(rep.jobs_cancelled == 0, "clean_bits_jobs on non-existent target returns 0 cancelled jobs");
 }
 
+static void test_ifeo_cleaner() {
+    Target dummy;
+    dummy.name = L"NonExistentIfeoApp987";
+    dummy.root_path = L"C:\\Program Files\\NonExistentIfeoApp987";
+
+    auto rep = IfeoCleaner::clean_ifeo_entries(dummy, true);
+    check(rep.target_keys_removed == 0 && rep.debugger_hooks_removed == 0,
+          "clean_ifeo_entries on non-existent target returns 0");
+}
+
+static void test_power_cleaner() {
+    Target dummy;
+    dummy.name = L"NonExistentPowerApp987";
+    dummy.root_path = L"C:\\Program Files\\NonExistentPowerApp987";
+
+    auto rep = PowerCleaner::clean_power_overrides(dummy, true);
+    check(rep.power_overrides_removed == 0,
+          "clean_power_overrides on non-existent target returns 0");
+}
+
+static void test_recent_apps_cleaner() {
+    Target target;
+    target.name = L"MockRecentApp";
+    target.root_path = L"C:\\Program Files\\MockRecentApp";
+
+    // Setup mock RecentApps key in HKCU
+    const std::wstring recent_key = L"Software\\Microsoft\\Windows\\CurrentVersion\\Search\\RecentApps\\{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}";
+    UniqueHKey hRecent;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, recent_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hRecent.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring app_path = target.root_path + L"\\app.exe";
+        RegSetValueExW(hRecent.get(), L"AppPath", 0, REG_SZ, reinterpret_cast<const BYTE*>(app_path.c_str()), static_cast<DWORD>((app_path.size() + 1) * sizeof(wchar_t)));
+    }
+
+    // Dry run
+    auto dry_rep = RecentAppsCleaner::clean_recent_apps(target, true);
+    check(dry_rep.recent_apps_removed >= 1, "RecentAppsCleaner dry run detected mock RecentApps key");
+
+    // Live run
+    auto live_rep = RecentAppsCleaner::clean_recent_apps(target, false);
+    check(live_rep.recent_apps_removed >= 1, "RecentAppsCleaner live removed mock RecentApps key");
+
+    // Verify key was deleted
+    UniqueHKey hVerify;
+    LSTATUS s = RegOpenKeyExW(HKEY_CURRENT_USER, recent_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s != ERROR_SUCCESS, "mock RecentApps key deleted from registry");
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -2325,6 +2375,12 @@ int main() {
     test_notification_cleaner();
     std::wcout << L"[RUN] test_bits_cleaner\n" << std::flush;
     test_bits_cleaner();
+    std::wcout << L"[RUN] test_ifeo_cleaner\n" << std::flush;
+    test_ifeo_cleaner();
+    std::wcout << L"[RUN] test_power_cleaner\n" << std::flush;
+    test_power_cleaner();
+    std::wcout << L"[RUN] test_recent_apps_cleaner\n" << std::flush;
+    test_recent_apps_cleaner();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;

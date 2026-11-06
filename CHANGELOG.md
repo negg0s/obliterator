@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Application Compatibility layer cleaner (`AppCompatCleaner`): scans and removes orphaned compatibility mode layer flags (`AppCompatFlags\Layers` in `HKLM` and `HKCU`), Program Compatibility Assistant records (`AppCompatFlags\Compatibility Assistant\Store`), and custom SDB flags pointing to uninstalled applications.
 - Windows Notification and Task Manager Startup cleaner (`NotificationCleaner`): purges phantom AppUserModelID notification configurations (`Notifications\Settings`) in Windows Settings and removes ghost startup entries in `StartupApproved\Run`, `Run32`, and `StartupFolder` across `HKLM` and `HKCU` to prevent blank entries in Task Manager's Startup apps tab.
 - Background Intelligent Transfer Service cleaner (`BitsCleaner`): enumerates persistent background download jobs via BITS COM interfaces (`IBackgroundCopyManager`, `IBackgroundCopyJob`, `IBackgroundCopyFile`), cancelling orphaned download jobs targeting removed application trees and reclaiming network bandwidth and temp space.
+- Image File Execution Options cleaner (`IfeoCleaner`): removes target executable keys in `Image File Execution Options` (`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options`) and scans all IFEO keys to remove lingering `Debugger` interception hooks pointing into uninstalled program directories.
+- Windows Power Request Overrides cleaner (`PowerCleaner`): removes orphaned power execution overrides in `PowerRequestOverrides\PROCESS` (`HKLM\SYSTEM\CurrentControlSet\Control\Power`) to restore normal system sleep, display timeouts, and Modern Standby states.
+- Windows Search RecentApps cleaner (`RecentAppsCleaner`): cleans orphaned `{GUID}` records in `HKCU\Software\Microsoft\Windows\CurrentVersion\Search\RecentApps` referencing uninstalled binaries, clearing phantom entries from the Start Menu and Search history.
 
 ## [0.2.0] - 2026-11-04
 
