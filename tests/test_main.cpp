@@ -56,6 +56,9 @@
 #include "obliterator/defender_cleaner.hpp"
 #include "obliterator/comdlg_cleaner.hpp"
 #include "obliterator/console_cleaner.hpp"
+#include "obliterator/proxy_cleaner.hpp"
+#include "obliterator/print_cleaner.hpp"
+#include "obliterator/csp_cleaner.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
@@ -2447,6 +2450,125 @@ static void test_console_cleaner() {
     check(s != ERROR_SUCCESS, "mock Console subkey deleted from registry");
 }
 
+static void test_proxy_cleaner() {
+    Target target;
+    target.name = L"MockProxyApp";
+    target.root_path = L"C:\\Program Files\\MockProxyApp";
+
+    const std::wstring inet_key = L"Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
+    UniqueHKey hInet;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, inet_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hInet.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring pac = L"file://C:/Program Files/MockProxyApp/proxy.pac";
+        RegSetValueExW(hInet.get(), L"AutoConfigURL", 0, REG_SZ, reinterpret_cast<const BYTE*>(pac.c_str()), static_cast<DWORD>((pac.size() + 1) * sizeof(wchar_t)));
+        DWORD enable = 1;
+        RegSetValueExW(hInet.get(), L"ProxyEnable", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&enable), sizeof(DWORD));
+        const std::wstring srv = L"http=127.0.0.1:8888";
+        RegSetValueExW(hInet.get(), L"ProxyServer", 0, REG_SZ, reinterpret_cast<const BYTE*>(srv.c_str()), static_cast<DWORD>((srv.size() + 1) * sizeof(wchar_t)));
+    }
+
+    auto dry_rep = ProxyCleaner::clean_proxy_settings(target, true);
+    check(dry_rep.proxy_settings_reset >= 1, "ProxyCleaner dry run detected mock proxy configuration");
+
+    auto live_rep = ProxyCleaner::clean_proxy_settings(target, false);
+    check(live_rep.proxy_settings_reset >= 1, "ProxyCleaner live reset mock proxy configuration");
+
+    UniqueHKey hVerify;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, inet_key.c_str(), 0, KEY_READ, hVerify.put()) == ERROR_SUCCESS) {
+        LSTATUS s = RegQueryValueExW(hVerify.get(), L"AutoConfigURL", nullptr, nullptr, nullptr, nullptr);
+        check(s != ERROR_SUCCESS, "mock AutoConfigURL deleted from registry");
+
+        DWORD dwEnable = 1;
+        DWORD dwLen = sizeof(dwEnable);
+        RegQueryValueExW(hVerify.get(), L"ProxyEnable", nullptr, nullptr, reinterpret_cast<BYTE*>(&dwEnable), &dwLen);
+        check(dwEnable == 0, "mock ProxyEnable reset to 0 in registry");
+    }
+}
+
+static void test_print_cleaner() {
+    Target target;
+    target.name = L"MockPdfApp";
+    target.root_path = L"C:\\Program Files\\MockPdfApp";
+
+    const std::wstring mon_key = L"SYSTEM\\CurrentControlSet\\Control\\Print\\Monitors\\MockPdfAppMon";
+    const std::wstring prn_key = L"SYSTEM\\CurrentControlSet\\Control\\Print\\Printers\\MockPdfAppPrinter";
+
+    UniqueHKey hMon, hPrn;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, mon_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hMon.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring drv = L"C:\\Program Files\\MockPdfApp\\pdfmon.dll";
+        RegSetValueExW(hMon.get(), L"Driver", 0, REG_SZ, reinterpret_cast<const BYTE*>(drv.c_str()), static_cast<DWORD>((drv.size() + 1) * sizeof(wchar_t)));
+    }
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, prn_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hPrn.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring drv = L"C:\\Program Files\\MockPdfApp\\pdfprint.dll";
+        RegSetValueExW(hPrn.get(), L"Printer Driver", 0, REG_SZ, reinterpret_cast<const BYTE*>(drv.c_str()), static_cast<DWORD>((drv.size() + 1) * sizeof(wchar_t)));
+    }
+
+    auto dry_rep = PrintCleaner::clean_print_artifacts(target, true);
+    check(dry_rep.monitors_removed >= 1, "PrintCleaner dry run detected mock monitor");
+    check(dry_rep.printers_removed >= 1, "PrintCleaner dry run detected mock printer");
+
+    auto live_rep = PrintCleaner::clean_print_artifacts(target, false);
+    check(live_rep.monitors_removed >= 1, "PrintCleaner live removed mock monitor");
+    check(live_rep.printers_removed >= 1, "PrintCleaner live removed mock printer");
+
+    UniqueHKey hVerify;
+    LSTATUS s1 = RegOpenKeyExW(HKEY_CURRENT_USER, mon_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s1 != ERROR_SUCCESS, "mock print monitor deleted from registry");
+    hVerify.reset();
+    LSTATUS s2 = RegOpenKeyExW(HKEY_CURRENT_USER, prn_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s2 != ERROR_SUCCESS, "mock printer deleted from registry");
+
+    // Cleanup parent mock tree
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SYSTEM\\CurrentControlSet\\Control\\Print\\Monitors");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SYSTEM\\CurrentControlSet\\Control\\Print\\Printers");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SYSTEM\\CurrentControlSet\\Control\\Print");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SYSTEM\\CurrentControlSet\\Control");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SYSTEM\\CurrentControlSet");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SYSTEM");
+}
+
+static void test_csp_cleaner() {
+    Target target;
+    target.name = L"MockCspTokenApp";
+    target.root_path = L"C:\\Program Files\\MockCspTokenApp";
+
+    const std::wstring prov_key = L"SOFTWARE\\Microsoft\\Cryptography\\Defaults\\Provider\\MockTokenCSP";
+    const std::wstring type_key = L"SOFTWARE\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Provider Type 999";
+
+    UniqueHKey hProv, hType;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, prov_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hProv.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring img = L"C:\\Program Files\\MockCspTokenApp\\token_csp.dll";
+        RegSetValueExW(hProv.get(), L"Image Path", 0, REG_SZ, reinterpret_cast<const BYTE*>(img.c_str()), static_cast<DWORD>((img.size() + 1) * sizeof(wchar_t)));
+    }
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, type_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hType.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring name = L"MockTokenCSP";
+        RegSetValueExW(hType.get(), L"Name", 0, REG_SZ, reinterpret_cast<const BYTE*>(name.c_str()), static_cast<DWORD>((name.size() + 1) * sizeof(wchar_t)));
+    }
+
+    auto dry_rep = CspCleaner::clean_csps(target, true);
+    check(dry_rep.providers_removed >= 1, "CspCleaner dry run detected mock CSP");
+
+    auto live_rep = CspCleaner::clean_csps(target, false);
+    check(live_rep.providers_removed >= 1, "CspCleaner live removed mock CSP");
+    check(live_rep.provider_types_cleaned >= 1, "CspCleaner live cleaned provider type reference");
+
+    UniqueHKey hVerify;
+    LSTATUS s1 = RegOpenKeyExW(HKEY_CURRENT_USER, prov_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s1 != ERROR_SUCCESS, "mock CSP deleted from registry");
+
+    hVerify.reset();
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, type_key.c_str(), 0, KEY_READ, hVerify.put()) == ERROR_SUCCESS) {
+        LSTATUS s2 = RegQueryValueExW(hVerify.get(), L"Name", nullptr, nullptr, nullptr, nullptr);
+        check(s2 != ERROR_SUCCESS, "mock Provider Type reference deleted from registry");
+    }
+
+    // Cleanup parent mock tree
+    RegDeleteKeyW(HKEY_CURRENT_USER, type_key.c_str());
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Cryptography\\Defaults\\Provider Types");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Cryptography\\Defaults\\Provider");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Cryptography\\Defaults");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Cryptography");
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -2588,6 +2710,12 @@ int main() {
     test_comdlg_cleaner();
     std::wcout << L"[RUN] test_console_cleaner\n" << std::flush;
     test_console_cleaner();
+    std::wcout << L"[RUN] test_proxy_cleaner\n" << std::flush;
+    test_proxy_cleaner();
+    std::wcout << L"[RUN] test_print_cleaner\n" << std::flush;
+    test_print_cleaner();
+    std::wcout << L"[RUN] test_csp_cleaner\n" << std::flush;
+    test_csp_cleaner();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;

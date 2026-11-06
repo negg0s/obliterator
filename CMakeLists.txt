@@ -108,6 +108,9 @@ add_library(obliterator_core STATIC
     include/obliterator/defender_cleaner.hpp
     include/obliterator/comdlg_cleaner.hpp
     include/obliterator/console_cleaner.hpp
+    include/obliterator/proxy_cleaner.hpp
+    include/obliterator/print_cleaner.hpp
+    include/obliterator/csp_cleaner.hpp
     src/cli.cpp
     src/confidence_engine.cpp
     src/defuse.cpp
@@ -166,6 +169,9 @@ add_library(obliterator_core STATIC
     src/defender_cleaner.cpp
     src/comdlg_cleaner.cpp
     src/console_cleaner.cpp
+    src/proxy_cleaner.cpp
+    src/print_cleaner.cpp
+    src/csp_cleaner.cpp
 )
 
 target_include_directories(obliterator_core PUBLIC

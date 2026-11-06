@@ -22,6 +22,9 @@
 #include "obliterator/notification_cleaner.hpp"
 #include "obliterator/plan.hpp"
 #include "obliterator/power_cleaner.hpp"
+#include "obliterator/print_cleaner.hpp"
+#include "obliterator/proxy_cleaner.hpp"
+#include "obliterator/csp_cleaner.hpp"
 #include "obliterator/recent_apps_cleaner.hpp"
 #include "obliterator/user_assist_cleaner.hpp"
 #include "obliterator/wer_cleaner.hpp"
@@ -598,6 +601,27 @@ FinalReport execute_obliteration(
     const auto con_rep = ConsoleCleaner::clean_console_settings(target, options.dry_run);
     if (con_rep.console_configs_removed > 0) {
         emit_log(L"Cleaned " + std::to_wstring(con_rep.console_configs_removed) + L" Console configurations.");
+    }
+
+    // Clean WinINet proxy settings and PAC configurations
+    const auto proxy_rep = ProxyCleaner::clean_proxy_settings(target, options.dry_run);
+    if (proxy_rep.proxy_settings_reset > 0) {
+        emit_log(L"Reset " + std::to_wstring(proxy_rep.proxy_settings_reset) + L" proxy settings.");
+    }
+
+    // Clean Print Spooler monitors, processors, and virtual printers
+    const auto print_rep = PrintCleaner::clean_print_artifacts(target, options.dry_run);
+    if (print_rep.monitors_removed > 0 || print_rep.processors_removed > 0 || print_rep.printers_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(print_rep.monitors_removed) + L" print monitors, " +
+                 std::to_wstring(print_rep.processors_removed) + L" print processors, and " +
+                 std::to_wstring(print_rep.printers_removed) + L" printers.");
+    }
+
+    // Clean Cryptographic Service Providers (CSPs)
+    const auto csp_rep = CspCleaner::clean_csps(target, options.dry_run);
+    if (csp_rep.providers_removed > 0 || csp_rep.provider_types_cleaned > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(csp_rep.providers_removed) + L" CSPs and " +
+                 std::to_wstring(csp_rep.provider_types_cleaned) + L" provider type references.");
     }
 
     namespace fs = std::filesystem;
