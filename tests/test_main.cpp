@@ -65,6 +65,9 @@
 #include "obliterator/namespace_cleaner.hpp"
 #include "obliterator/wsl_cleaner.hpp"
 #include "obliterator/terminal_cleaner.hpp"
+#include "obliterator/winsock_cleaner.hpp"
+#include "obliterator/autoplay_cleaner.hpp"
+#include "obliterator/search_handler_cleaner.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
@@ -2782,6 +2785,124 @@ static void test_terminal_cleaner() {
     }
 }
 
+static void test_winsock_cleaner() {
+    Target target;
+    target.name = L"MockVpnApp";
+    target.root_path = L"C:\\Program Files\\MockVpnApp";
+
+    const std::wstring cat_key = L"SYSTEM\\CurrentControlSet\\Services\\WinSock2\\Parameters\\NameSpace_Catalog5\\Catalog_Entries\\000000009999";
+    UniqueHKey hCat;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, cat_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hCat.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring disp = L"MockVpn NameSpace Provider";
+        RegSetValueExW(hCat.get(), L"DisplayString", 0, REG_SZ, reinterpret_cast<const BYTE*>(disp.c_str()), static_cast<DWORD>((disp.size() + 1) * sizeof(wchar_t)));
+        const std::wstring lib = L"C:\\Program Files\\MockVpnApp\\vpn_lsp.dll";
+        RegSetValueExW(hCat.get(), L"LibraryPath", 0, REG_SZ, reinterpret_cast<const BYTE*>(lib.c_str()), static_cast<DWORD>((lib.size() + 1) * sizeof(wchar_t)));
+    }
+
+    auto dry_rep = WinsockCleaner::clean_winsock_providers(target, true);
+    check(dry_rep.catalog_entries_removed >= 1, "WinsockCleaner dry run detected mock provider");
+
+    auto live_rep = WinsockCleaner::clean_winsock_providers(target, false);
+    check(live_rep.catalog_entries_removed >= 1, "WinsockCleaner live removed mock provider");
+
+    UniqueHKey hVerify;
+    LSTATUS s = RegOpenKeyExW(HKEY_CURRENT_USER, cat_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s != ERROR_SUCCESS, "mock WinSock provider subkey deleted from registry");
+
+    // Cleanup parent mock tree
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SYSTEM\\CurrentControlSet\\Services\\WinSock2\\Parameters\\NameSpace_Catalog5\\Catalog_Entries");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SYSTEM\\CurrentControlSet\\Services\\WinSock2\\Parameters\\NameSpace_Catalog5");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SYSTEM\\CurrentControlSet\\Services\\WinSock2\\Parameters");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SYSTEM\\CurrentControlSet\\Services\\WinSock2");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SYSTEM\\CurrentControlSet\\Services");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SYSTEM\\CurrentControlSet");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SYSTEM");
+}
+
+static void test_autoplay_cleaner() {
+    Target target;
+    target.name = L"MockMediaSuite";
+    target.root_path = L"C:\\Program Files\\MockMediaSuite";
+
+    const std::wstring handler_key = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\AutoplayHandlers\\Handlers\\MockMediaSuitePlay";
+    const std::wstring event_key = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\AutoplayHandlers\\EventHandlers\\PlayVideoFilesOnArrival";
+
+    UniqueHKey hHand, hEv;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, handler_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hHand.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring prov = L"MockMediaSuite Player";
+        RegSetValueExW(hHand.get(), L"Provider", 0, REG_SZ, reinterpret_cast<const BYTE*>(prov.c_str()), static_cast<DWORD>((prov.size() + 1) * sizeof(wchar_t)));
+        const std::wstring icon = L"C:\\Program Files\\MockMediaSuite\\player.exe,0";
+        RegSetValueExW(hHand.get(), L"DefaultIcon", 0, REG_SZ, reinterpret_cast<const BYTE*>(icon.c_str()), static_cast<DWORD>((icon.size() + 1) * sizeof(wchar_t)));
+    }
+
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, event_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hEv.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring dummy = L"";
+        RegSetValueExW(hEv.get(), L"MockMediaSuitePlay", 0, REG_SZ, reinterpret_cast<const BYTE*>(dummy.c_str()), static_cast<DWORD>((dummy.size() + 1) * sizeof(wchar_t)));
+    }
+
+    auto dry_rep = AutoPlayCleaner::clean_autoplay_handlers(target, true);
+    check(dry_rep.autoplay_handlers_removed >= 1, "AutoPlayCleaner dry run detected mock handler");
+
+    auto live_rep = AutoPlayCleaner::clean_autoplay_handlers(target, false);
+    check(live_rep.autoplay_handlers_removed >= 1, "AutoPlayCleaner live removed mock handler");
+    check(live_rep.event_bindings_removed >= 1, "AutoPlayCleaner live removed event binding");
+
+    UniqueHKey hVerify;
+    LSTATUS s1 = RegOpenKeyExW(HKEY_CURRENT_USER, handler_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s1 != ERROR_SUCCESS, "mock AutoPlay handler key deleted from registry");
+
+    hVerify.reset();
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, event_key.c_str(), 0, KEY_READ, hVerify.put()) == ERROR_SUCCESS) {
+        LSTATUS s2 = RegQueryValueExW(hVerify.get(), L"MockMediaSuitePlay", nullptr, nullptr, nullptr, nullptr);
+        check(s2 != ERROR_SUCCESS, "mock AutoPlay event binding deleted from registry");
+    }
+
+    // Cleanup parent mock tree
+    RegDeleteKeyW(HKEY_CURRENT_USER, event_key.c_str());
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\AutoplayHandlers\\EventHandlers");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\AutoplayHandlers\\Handlers");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\AutoplayHandlers");
+}
+
+static void test_search_handler_cleaner() {
+    Target target;
+    target.name = L"MockDesktopSearch";
+    target.root_path = L"C:\\Program Files\\MockDesktopSearch";
+
+    const std::wstring proto_key = L"SOFTWARE\\Microsoft\\Windows Search\\ProtocolHandlers";
+    const std::wstring clsid_key = L"Software\\Classes\\CLSID\\{E6F7A8B9-C0D1-2345-6789-0ABCDEF01235}\\InprocServer32";
+
+    UniqueHKey hProto, hInproc;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, proto_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hProto.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring clsid_str = L"{E6F7A8B9-C0D1-2345-6789-0ABCDEF01235}";
+        RegSetValueExW(hProto.get(), L"mockdesktopsearch", 0, REG_SZ, reinterpret_cast<const BYTE*>(clsid_str.c_str()), static_cast<DWORD>((clsid_str.size() + 1) * sizeof(wchar_t)));
+    }
+
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, clsid_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hInproc.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring lib = L"C:\\Program Files\\MockDesktopSearch\\search_handler.dll";
+        RegSetValueExW(hInproc.get(), nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(lib.c_str()), static_cast<DWORD>((lib.size() + 1) * sizeof(wchar_t)));
+    }
+
+    auto dry_rep = SearchHandlerCleaner::clean_search_handlers(target, true);
+    check(dry_rep.protocol_handlers_removed >= 1, "SearchHandlerCleaner dry run detected mock protocol");
+
+    auto live_rep = SearchHandlerCleaner::clean_search_handlers(target, false);
+    check(live_rep.protocol_handlers_removed >= 1, "SearchHandlerCleaner live removed mock protocol");
+
+    UniqueHKey hVerify;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, proto_key.c_str(), 0, KEY_READ, hVerify.put()) == ERROR_SUCCESS) {
+        LSTATUS s = RegQueryValueExW(hVerify.get(), L"mockdesktopsearch", nullptr, nullptr, nullptr, nullptr);
+        check(s != ERROR_SUCCESS, "mock search protocol handler value deleted from registry");
+    }
+
+    hVerify.reset();
+    LSTATUS s2 = RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\CLSID\\{E6F7A8B9-C0D1-2345-6789-0ABCDEF01235}", 0, KEY_READ, hVerify.put());
+    check(s2 != ERROR_SUCCESS, "mock search CLSID key deleted from registry");
+
+    RegDeleteKeyW(HKEY_CURRENT_USER, proto_key.c_str());
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows Search");
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -2941,6 +3062,12 @@ int main() {
     test_wsl_cleaner();
     std::wcout << L"[RUN] test_terminal_cleaner\n" << std::flush;
     test_terminal_cleaner();
+    std::wcout << L"[RUN] test_winsock_cleaner\n" << std::flush;
+    test_winsock_cleaner();
+    std::wcout << L"[RUN] test_autoplay_cleaner\n" << std::flush;
+    test_autoplay_cleaner();
+    std::wcout << L"[RUN] test_search_handler_cleaner\n" << std::flush;
+    test_search_handler_cleaner();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;

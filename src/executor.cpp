@@ -5,6 +5,7 @@
 #include "obliterator/app_compat_cleaner.hpp"
 #include "obliterator/association_cleaner.hpp"
 #include "obliterator/audio_cleaner.hpp"
+#include "obliterator/autoplay_cleaner.hpp"
 #include "obliterator/bits_cleaner.hpp"
 #include "obliterator/cert_cleaner.hpp"
 #include "obliterator/comdlg_cleaner.hpp"
@@ -29,12 +30,13 @@
 #include "obliterator/power_cleaner.hpp"
 #include "obliterator/print_cleaner.hpp"
 #include "obliterator/proxy_cleaner.hpp"
-#include "obliterator/csp_cleaner.hpp"
 #include "obliterator/recent_apps_cleaner.hpp"
+#include "obliterator/search_handler_cleaner.hpp"
 #include "obliterator/terminal_cleaner.hpp"
 #include "obliterator/user_assist_cleaner.hpp"
 #include "obliterator/wer_cleaner.hpp"
 #include "obliterator/wfp_cleaner.hpp"
+#include "obliterator/winsock_cleaner.hpp"
 #include "obliterator/wsl_cleaner.hpp"
 #include "obliterator/process.hpp"
 #include "obliterator/profile.hpp"
@@ -668,6 +670,25 @@ FinalReport execute_obliteration(
     const auto term_rep = TerminalCleaner::clean_terminal_fragments(target, options.dry_run);
     if (term_rep.fragment_folders_removed > 0) {
         emit_log(L"Cleaned " + std::to_wstring(term_rep.fragment_folders_removed) + L" Windows Terminal fragment folders.");
+    }
+
+    // Clean WinSock Namespace Providers
+    const auto ws_rep = WinsockCleaner::clean_winsock_providers(target, options.dry_run);
+    if (ws_rep.catalog_entries_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(ws_rep.catalog_entries_removed) + L" WinSock Namespace Providers.");
+    }
+
+    // Clean Windows AutoPlay handlers and event bindings
+    const auto ap_rep = AutoPlayCleaner::clean_autoplay_handlers(target, options.dry_run);
+    if (ap_rep.autoplay_handlers_removed > 0 || ap_rep.event_bindings_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(ap_rep.autoplay_handlers_removed) + L" AutoPlay handlers and " +
+                 std::to_wstring(ap_rep.event_bindings_removed) + L" event bindings.");
+    }
+
+    // Clean Windows Search protocol handlers
+    const auto sh_rep = SearchHandlerCleaner::clean_search_handlers(target, options.dry_run);
+    if (sh_rep.protocol_handlers_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(sh_rep.protocol_handlers_removed) + L" Windows Search protocol handlers.");
     }
 
     namespace fs = std::filesystem;

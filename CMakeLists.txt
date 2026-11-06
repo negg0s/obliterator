@@ -117,6 +117,9 @@ add_library(obliterator_core STATIC
     include/obliterator/namespace_cleaner.hpp
     include/obliterator/wsl_cleaner.hpp
     include/obliterator/terminal_cleaner.hpp
+    include/obliterator/winsock_cleaner.hpp
+    include/obliterator/autoplay_cleaner.hpp
+    include/obliterator/search_handler_cleaner.hpp
     src/cli.cpp
     src/confidence_engine.cpp
     src/defuse.cpp
@@ -184,6 +187,9 @@ add_library(obliterator_core STATIC
     src/namespace_cleaner.cpp
     src/wsl_cleaner.cpp
     src/terminal_cleaner.cpp
+    src/winsock_cleaner.cpp
+    src/autoplay_cleaner.cpp
+    src/search_handler_cleaner.cpp
 )
 
 target_include_directories(obliterator_core PUBLIC
