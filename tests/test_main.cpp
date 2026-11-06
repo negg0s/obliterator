@@ -1937,8 +1937,12 @@ static void test_driver_cleaner() {
 
 static void test_ads_helper() {
     namespace fs = std::filesystem;
-    const fs::path test_file = L"D:\\Projects\\obliterator\\build_rel\\test_ads_file.txt";
-    const fs::path test_stream = L"D:\\Projects\\obliterator\\build_rel\\test_ads_file.txt:custom_metadata:$DATA";
+    const fs::path temp_dir = fs::temp_directory_path();
+    const fs::path test_file = temp_dir / L"test_ads_file.txt";
+    const fs::path test_stream = fs::path(test_file.wstring() + L":custom_metadata:$DATA");
+
+    std::error_code ec;
+    fs::create_directories(temp_dir, ec);
 
     // 1. Create base file
     {
@@ -1978,7 +1982,6 @@ static void test_ads_helper() {
     check(!stream_still_exists, "alternate data stream no longer exists after purge");
 
     // 6. Cleanup test file
-    std::error_code ec;
     fs::remove(test_file, ec);
 }
 
