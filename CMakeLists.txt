@@ -88,6 +88,9 @@ add_library(obliterator_core STATIC
     include/obliterator/batch.hpp
     include/obliterator/shell_cleaner.hpp
     include/obliterator/usn_journal.hpp
+    include/obliterator/msi_cleaner.hpp
+    include/obliterator/driver_cleaner.hpp
+    include/obliterator/ads.hpp
     src/cli.cpp
     src/confidence_engine.cpp
     src/defuse.cpp
@@ -126,6 +129,9 @@ add_library(obliterator_core STATIC
     src/batch.cpp
     src/shell_cleaner.cpp
     src/usn_journal.cpp
+    src/msi_cleaner.cpp
+    src/driver_cleaner.cpp
+    src/ads.cpp
 )
 
 target_include_directories(obliterator_core PUBLIC

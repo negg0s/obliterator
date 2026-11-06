@@ -36,6 +36,9 @@
 #include "obliterator/batch.hpp"
 #include "obliterator/shell_cleaner.hpp"
 #include "obliterator/usn_journal.hpp"
+#include "obliterator/msi_cleaner.hpp"
+#include "obliterator/driver_cleaner.hpp"
+#include "obliterator/ads.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
@@ -1882,6 +1885,103 @@ static void test_usn_journal_scanner() {
     }
 }
 
+static void test_msi_cache_cleaner() {
+    // Test GUID packing and unpacking equivalence
+    const std::wstring original_guid = L"{92103200-3CDE-41FF-A385-4FE50FDCDB00}";
+    const std::wstring expected_packed = L"00230129EDC3FF143A58F45EF0CDBD00";
+
+    const std::wstring packed = MsiCacheCleaner::pack_guid(original_guid);
+    check(packed == expected_packed, "pack_guid produces correct packed format");
+
+    const std::wstring unpacked = MsiCacheCleaner::unpack_guid(packed);
+    check(unpacked == original_guid, "unpack_guid roundtrip produces original GUID");
+
+    // Test malformed input handling
+    check(MsiCacheCleaner::pack_guid(L"invalid").empty(), "pack_guid on invalid length returns empty");
+    check(MsiCacheCleaner::unpack_guid(L"short").empty(), "unpack_guid on invalid length returns empty");
+
+    // Test dry-run purge mock
+    MsiPackageInfo mock_pkg;
+    mock_pkg.packed_guid = packed;
+    mock_pkg.standard_guid = original_guid;
+    mock_pkg.display_name = L"Mock MSI App";
+    mock_pkg.local_package = L"C:\\Windows\\Installer\\mock.msi";
+    mock_pkg.package_size = 1024 * 1024;
+
+    size_t purged_count = MsiCacheCleaner::purge_package(mock_pkg, true);
+    check(purged_count == 1, "purge_package dry run reports 1 package");
+}
+
+static void test_driver_cleaner() {
+    // Protected vendor verification
+    check(DriverCleaner::is_protected_vendor(L"Microsoft"), "Microsoft is protected vendor");
+    check(DriverCleaner::is_protected_vendor(L"Intel Corporation"), "Intel Corporation is protected vendor");
+    check(DriverCleaner::is_protected_vendor(L"NVIDIA"), "NVIDIA is protected vendor");
+    check(DriverCleaner::is_protected_vendor(L"\"AMD\""), "AMD with quotes is protected vendor");
+    check(!DriverCleaner::is_protected_vendor(L"ThirdPartyGameStudio Inc"), "ThirdPartyGameStudio is not protected vendor");
+
+    // Safe discovery invocation on host INF directory
+    Target dummy_target;
+    dummy_target.name = L"NonExistentDriverAppXYZ123";
+    auto drivers = DriverCleaner::discover_oem_drivers(dummy_target, {});
+    check(drivers.empty(), "discovery on non-existent app returns empty list");
+
+    // Test dry run uninstallation on mock
+    OemDriverInfo mock_drv;
+    mock_drv.inf_filename = L"oem999.inf";
+    mock_drv.provider = L"Mock Vendor";
+    mock_drv.matched_reason = L"test mock";
+    size_t uninstalled = DriverCleaner::uninstall_oem_driver(mock_drv, true);
+    check(uninstalled == 1, "driver uninstallation dry-run reports 1");
+}
+
+static void test_ads_helper() {
+    namespace fs = std::filesystem;
+    const fs::path test_file = L"D:\\Projects\\obliterator\\build_rel\\test_ads_file.txt";
+    const fs::path test_stream = L"D:\\Projects\\obliterator\\build_rel\\test_ads_file.txt:custom_metadata:$DATA";
+
+    // 1. Create base file
+    {
+        std::ofstream base_out(test_file);
+        base_out << "primary file contents";
+    }
+
+    // 2. Create alternate data stream
+    {
+        std::ofstream stream_out(test_stream);
+        stream_out << "hidden telemetry or state data";
+    }
+
+    // 3. Enumerate streams
+    auto streams = AdsHelper::enumerate_streams(test_file.wstring());
+    bool found_stream = false;
+    for (const auto& s : streams) {
+        if (s.stream_name.find(L":custom_metadata") != std::wstring::npos) {
+            found_stream = true;
+            check(s.stream_size > 0, "alternate data stream size > 0");
+        }
+    }
+    check(found_stream, "AdsHelper discovered custom alternate data stream");
+
+    // 4. Purge streams
+    size_t purged = AdsHelper::purge_alternate_streams(test_file.wstring());
+    check(purged >= 1, "AdsHelper purged alternate data stream");
+
+    // 5. Verify streams are gone
+    auto streams_after = AdsHelper::enumerate_streams(test_file.wstring());
+    bool stream_still_exists = false;
+    for (const auto& s : streams_after) {
+        if (s.stream_name.find(L":custom_metadata") != std::wstring::npos) {
+            stream_still_exists = true;
+        }
+    }
+    check(!stream_still_exists, "alternate data stream no longer exists after purge");
+
+    // 6. Cleanup test file
+    std::error_code ec;
+    fs::remove(test_file, ec);
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -1983,6 +2083,12 @@ int main() {
     test_shell_cleaner();
     std::wcout << L"[RUN] test_usn_journal_scanner\n" << std::flush;
     test_usn_journal_scanner();
+    std::wcout << L"[RUN] test_msi_cache_cleaner\n" << std::flush;
+    test_msi_cache_cleaner();
+    std::wcout << L"[RUN] test_driver_cleaner\n" << std::flush;
+    test_driver_cleaner();
+    std::wcout << L"[RUN] test_ads_helper\n" << std::flush;
+    test_ads_helper();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;

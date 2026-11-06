@@ -1,10 +1,13 @@
 #include "obliterator/executor.hpp"
 
+#include "obliterator/ads.hpp"
 #include "obliterator/confidence_engine.hpp"
 #include "obliterator/defuse.hpp"
+#include "obliterator/driver_cleaner.hpp"
 #include "obliterator/error.hpp"
 #include "obliterator/leftovers.hpp"
 #include "obliterator/log.hpp"
+#include "obliterator/msi_cleaner.hpp"
 #include "obliterator/plan.hpp"
 #include "obliterator/process.hpp"
 #include "obliterator/profile.hpp"
@@ -356,6 +359,10 @@ FinalReport execute_obliteration(
     PhysicalWipeReport wipe_report;
     Result<void> wipe_res = Result<void>::success();
 
+    if (!target.root_path.empty()) {
+        AdsHelper::purge_alternate_streams(target.root_path);
+    }
+
     if (options.quarantine) {
         emit_log(L"Phase 6: Quarantining target files...");
         auto q_res = QuarantineManager::quarantine_target(target, options.quarantine_dir);
@@ -411,6 +418,30 @@ FinalReport execute_obliteration(
     const auto shell_rep = ShellCleaner::clean_shell_extensions(target.root_path, target.name);
     reg_report.shell_entries_deleted += (shell_rep.clsids_deleted + shell_rep.context_menu_handlers_deleted + shell_rep.icon_overlays_deleted);
     reg_report.total_keys_deleted += (shell_rep.clsids_deleted + shell_rep.context_menu_handlers_deleted + shell_rep.icon_overlays_deleted);
+
+    // Clean cached MSI packages and Installer registrations
+    const auto msi_pkgs = MsiCacheCleaner::discover_packages(target);
+    if (!msi_pkgs.empty()) {
+        emit_log(L"Found " + std::to_wstring(msi_pkgs.size()) + L" cached MSI package registrations.");
+        for (const auto& pkg : msi_pkgs) {
+            final_report.bytes_freed += pkg.package_size;
+            MsiCacheCleaner::purge_package(pkg, options.dry_run);
+        }
+    }
+
+    // Clean OEM DriverStore packages
+    std::vector<std::wstring> service_bins;
+    for (const auto& s : plan.services_to_remove) {
+        if (!s.binary_path.empty()) {
+            service_bins.push_back(s.binary_path);
+        }
+        service_bins.push_back(s.name);
+    }
+    const auto oem_drivers = DriverCleaner::discover_oem_drivers(target, service_bins);
+    if (!oem_drivers.empty()) {
+        emit_log(L"Found " + std::to_wstring(oem_drivers.size()) + L" OEM driver packages.");
+        DriverCleaner::uninstall_oem_drivers(oem_drivers, options.dry_run);
+    }
 
     final_report.uninstall_keys_deleted = reg_report.uninstall_keys_deleted;
     final_report.autorun_values_deleted = reg_report.autorun_values_deleted;

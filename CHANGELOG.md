@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Native PowerShell module (`scripts/Obliterator.psd1`, `scripts/Obliterator.psm1`): exposes `Get-ObliteratorApp`, `Invoke-Obliteration`, `Get-ObliteratorSession`, and `Restore-ObliteratorSession` with native pipeline support and tab-completion.
 - Headless JSON-RPC / NDJSON streaming daemon (`--rpc`): provides a streaming control protocol over standard I/O for automation tools, PowerShell, Python, Ansible, and external GUIs with real-time progress events.
 - Batch uninstallation pipeline (`--batch <file>`): non-interactive sequential removal supporting plaintext and JSON input lists with consolidated summary reporting for Golden Image preparation and Sysprep.
+- Windows Installer package cache cleaner (`MsiCacheCleaner`): resolves product codes using packed GUID transposition algorithms, unlinks cached `.msi` installers from `%SystemRoot%\Installer`, and deregisters entries in `UserData\S-1-5-18\Products` and `HKCR\Installer`.
+- OEM DriverStore package uninstaller (`DriverCleaner`): inspects `%SystemRoot%\INF\oem*.inf` metadata for matched service binaries, catalog hashes, and vendor names, triggering forced driver deregistration via `SetupUninstallOEMInfW` (`SUOI_FORCEDELETE`) with protected hardware vendor guards.
+- NTFS Alternate Data Stream purger (`AdsHelper`): discovers and unlinks secondary data streams (`:Zone.Identifier`, `:favicon`, hidden metadata streams) via `FindFirstStreamW` during directory wipes.
 
 ## [0.2.0] - 2026-11-04
 
