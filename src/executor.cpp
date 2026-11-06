@@ -1,6 +1,7 @@
 #include "obliterator/executor.hpp"
 
 #include "obliterator/ads.hpp"
+#include "obliterator/aedebug_cleaner.hpp"
 #include "obliterator/app_compat_cleaner.hpp"
 #include "obliterator/association_cleaner.hpp"
 #include "obliterator/audio_cleaner.hpp"
@@ -9,6 +10,8 @@
 #include "obliterator/comdlg_cleaner.hpp"
 #include "obliterator/confidence_engine.hpp"
 #include "obliterator/console_cleaner.hpp"
+#include "obliterator/csp_cleaner.hpp"
+#include "obliterator/dcom_cleaner.hpp"
 #include "obliterator/defender_cleaner.hpp"
 #include "obliterator/defuse.hpp"
 #include "obliterator/driver_cleaner.hpp"
@@ -18,6 +21,7 @@
 #include "obliterator/ifeo_cleaner.hpp"
 #include "obliterator/leftovers.hpp"
 #include "obliterator/log.hpp"
+#include "obliterator/media_cleaner.hpp"
 #include "obliterator/msi_cleaner.hpp"
 #include "obliterator/notification_cleaner.hpp"
 #include "obliterator/plan.hpp"
@@ -622,6 +626,26 @@ FinalReport execute_obliteration(
     if (csp_rep.providers_removed > 0 || csp_rep.provider_types_cleaned > 0) {
         emit_log(L"Cleaned " + std::to_wstring(csp_rep.providers_removed) + L" CSPs and " +
                  std::to_wstring(csp_rep.provider_types_cleaned) + L" provider type references.");
+    }
+
+    // Clean DirectShow filters, Media Foundation transforms, and bytestream handlers
+    const auto media_rep = MediaCleaner::clean_media_artifacts(target, options.dry_run);
+    if (media_rep.directshow_filters_removed > 0 || media_rep.mf_transforms_removed > 0 || media_rep.bytestream_handlers_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(media_rep.directshow_filters_removed) + L" DirectShow filters, " +
+                 std::to_wstring(media_rep.mf_transforms_removed) + L" Media Foundation transforms, and " +
+                 std::to_wstring(media_rep.bytestream_handlers_removed) + L" bytestream handlers.");
+    }
+
+    // Clean DCOM AppID registrations and surrogate hooks
+    const auto dcom_rep = DcomCleaner::clean_dcom_appids(target, options.dry_run);
+    if (dcom_rep.appids_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(dcom_rep.appids_removed) + L" DCOM AppID entries.");
+    }
+
+    // Clean AeDebug post-mortem crash handler hooks
+    const auto aedebug_rep = AeDebugCleaner::clean_aedebug(target, options.dry_run);
+    if (aedebug_rep.aedebug_hooks_reset > 0) {
+        emit_log(L"Reset " + std::to_wstring(aedebug_rep.aedebug_hooks_reset) + L" AeDebug crash handler hooks.");
     }
 
     namespace fs = std::filesystem;

@@ -1,0 +1,33 @@
+#pragma once
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+#include "obliterator/target.hpp"
+
+#include <string>
+#include <vector>
+
+namespace obliterator {
+
+struct DcomCleanReport {
+    size_t appids_removed{0};
+    std::vector<std::wstring> details;
+};
+
+class DcomCleaner {
+public:
+    static DcomCleanReport clean_dcom_appids(const Target& target, bool dry_run);
+
+private:
+    static bool matches_target_executable(const std::wstring& filename, const Target& target);
+    static bool path_references_target(const std::wstring& path, const Target& target);
+    static bool string_matches_target(const std::wstring& str, const Target& target);
+};
+
+} // namespace obliterator

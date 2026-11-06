@@ -59,6 +59,9 @@
 #include "obliterator/proxy_cleaner.hpp"
 #include "obliterator/print_cleaner.hpp"
 #include "obliterator/csp_cleaner.hpp"
+#include "obliterator/media_cleaner.hpp"
+#include "obliterator/dcom_cleaner.hpp"
+#include "obliterator/aedebug_cleaner.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
@@ -2569,6 +2572,119 @@ static void test_csp_cleaner() {
     RegDeleteKeyW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Cryptography");
 }
 
+static void test_media_cleaner() {
+    Target target;
+    target.name = L"MockMediaApp";
+    target.root_path = L"C:\\Program Files\\MockMediaApp";
+
+    const std::wstring inst_key = L"Software\\Classes\\CLSID\\{083863F1-70DE-11D0-BD40-00A0C911CE86}\\Instance\\MockMediaFilter";
+    const std::wstring clsid_key = L"Software\\Classes\\CLSID\\{A1B2C3D4-E5F6-7890-1234-56789ABCDEF0}\\InprocServer32";
+
+    UniqueHKey hInst, hInproc;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, inst_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hInst.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring fname = L"MockMediaFilter";
+        RegSetValueExW(hInst.get(), L"FriendlyName", 0, REG_SZ, reinterpret_cast<const BYTE*>(fname.c_str()), static_cast<DWORD>((fname.size() + 1) * sizeof(wchar_t)));
+        const std::wstring clsid = L"{A1B2C3D4-E5F6-7890-1234-56789ABCDEF0}";
+        RegSetValueExW(hInst.get(), L"CLSID", 0, REG_SZ, reinterpret_cast<const BYTE*>(clsid.c_str()), static_cast<DWORD>((clsid.size() + 1) * sizeof(wchar_t)));
+    }
+
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, clsid_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hInproc.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring ax_path = L"C:\\Program Files\\MockMediaApp\\filter.ax";
+        RegSetValueExW(hInproc.get(), nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(ax_path.c_str()), static_cast<DWORD>((ax_path.size() + 1) * sizeof(wchar_t)));
+    }
+
+    auto dry_rep = MediaCleaner::clean_media_artifacts(target, true);
+    check(dry_rep.directshow_filters_removed >= 1, "MediaCleaner dry run detected mock filter");
+
+    auto live_rep = MediaCleaner::clean_media_artifacts(target, false);
+    check(live_rep.directshow_filters_removed >= 1, "MediaCleaner live removed mock filter");
+
+    UniqueHKey hVerify;
+    LSTATUS s1 = RegOpenKeyExW(HKEY_CURRENT_USER, inst_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s1 != ERROR_SUCCESS, "mock filter instance key deleted from registry");
+
+    hVerify.reset();
+    LSTATUS s2 = RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\CLSID\\{A1B2C3D4-E5F6-7890-1234-56789ABCDEF0}", 0, KEY_READ, hVerify.put());
+    check(s2 != ERROR_SUCCESS, "mock filter CLSID key deleted from registry");
+
+    // Cleanup parent mock keys
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\Classes\\CLSID\\{083863F1-70DE-11D0-BD40-00A0C911CE86}\\Instance");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\Classes\\CLSID\\{083863F1-70DE-11D0-BD40-00A0C911CE86}");
+}
+
+static void test_dcom_cleaner() {
+    Target target;
+    target.name = L"MockDcomApp";
+    target.root_path = L"C:\\Program Files\\MockDcomApp";
+
+    const std::wstring exe_key = L"Software\\Classes\\AppID\\mockdcomapp.exe";
+    const std::wstring guid_key = L"Software\\Classes\\AppID\\{B2C3D4E5-F6A7-8901-2345-6789ABCDEF01}";
+
+    UniqueHKey hExe, hGuid;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, exe_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hExe.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring guid_str = L"{B2C3D4E5-F6A7-8901-2345-6789ABCDEF01}";
+        RegSetValueExW(hExe.get(), L"AppID", 0, REG_SZ, reinterpret_cast<const BYTE*>(guid_str.c_str()), static_cast<DWORD>((guid_str.size() + 1) * sizeof(wchar_t)));
+    }
+
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, guid_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hGuid.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring desc = L"Mock DCOM Application Helper";
+        RegSetValueExW(hGuid.get(), nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(desc.c_str()), static_cast<DWORD>((desc.size() + 1) * sizeof(wchar_t)));
+        const std::wstring svc = L"MockDcomService";
+        RegSetValueExW(hGuid.get(), L"LocalService", 0, REG_SZ, reinterpret_cast<const BYTE*>(svc.c_str()), static_cast<DWORD>((svc.size() + 1) * sizeof(wchar_t)));
+    }
+
+    auto dry_rep = DcomCleaner::clean_dcom_appids(target, true);
+    check(dry_rep.appids_removed >= 1, "DcomCleaner dry run detected mock AppID");
+
+    auto live_rep = DcomCleaner::clean_dcom_appids(target, false);
+    check(live_rep.appids_removed >= 1, "DcomCleaner live removed mock AppID");
+
+    UniqueHKey hVerify;
+    LSTATUS s1 = RegOpenKeyExW(HKEY_CURRENT_USER, exe_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s1 != ERROR_SUCCESS, "mock executable AppID key deleted from registry");
+
+    hVerify.reset();
+    LSTATUS s2 = RegOpenKeyExW(HKEY_CURRENT_USER, guid_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s2 != ERROR_SUCCESS, "mock GUID AppID key deleted from registry");
+
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\Classes\\AppID");
+}
+
+static void test_aedebug_cleaner() {
+    Target target;
+    target.name = L"MockDebugApp";
+    target.root_path = L"C:\\Program Files\\MockDebugApp";
+
+    const std::wstring aedbg_key = L"Software\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug";
+    UniqueHKey hDbg;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, aedbg_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hDbg.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring dbg_cmd = L"\"C:\\Program Files\\MockDebugApp\\debugger.exe\" -p %ld -e %ld";
+        RegSetValueExW(hDbg.get(), L"Debugger", 0, REG_SZ, reinterpret_cast<const BYTE*>(dbg_cmd.c_str()), static_cast<DWORD>((dbg_cmd.size() + 1) * sizeof(wchar_t)));
+        const std::wstring auto_val = L"0";
+        RegSetValueExW(hDbg.get(), L"Auto", 0, REG_SZ, reinterpret_cast<const BYTE*>(auto_val.c_str()), static_cast<DWORD>((auto_val.size() + 1) * sizeof(wchar_t)));
+    }
+
+    auto dry_rep = AeDebugCleaner::clean_aedebug(target, true);
+    check(dry_rep.aedebug_hooks_reset >= 1, "AeDebugCleaner dry run detected mock debugger hook");
+
+    auto live_rep = AeDebugCleaner::clean_aedebug(target, false);
+    check(live_rep.aedebug_hooks_reset >= 1, "AeDebugCleaner live reset mock debugger hook");
+
+    UniqueHKey hVerify;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, aedbg_key.c_str(), 0, KEY_READ, hVerify.put()) == ERROR_SUCCESS) {
+        wchar_t buf[MAX_PATH] = { 0 };
+        DWORD len = sizeof(buf);
+        RegQueryValueExW(hVerify.get(), L"Debugger", nullptr, nullptr, reinterpret_cast<BYTE*>(buf), &len);
+        const std::wstring val(buf);
+        check(val.find(L"werfault.exe") != std::wstring::npos, "AeDebug Debugger reset to werfault.exe");
+    }
+
+    // Cleanup parent mock keys
+    RegDeleteKeyW(HKEY_CURRENT_USER, aedbg_key.c_str());
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows NT\\CurrentVersion");
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows NT");
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -2716,6 +2832,12 @@ int main() {
     test_print_cleaner();
     std::wcout << L"[RUN] test_csp_cleaner\n" << std::flush;
     test_csp_cleaner();
+    std::wcout << L"[RUN] test_media_cleaner\n" << std::flush;
+    test_media_cleaner();
+    std::wcout << L"[RUN] test_dcom_cleaner\n" << std::flush;
+    test_dcom_cleaner();
+    std::wcout << L"[RUN] test_aedebug_cleaner\n" << std::flush;
+    test_aedebug_cleaner();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;
