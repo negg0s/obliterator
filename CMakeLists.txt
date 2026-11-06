@@ -86,6 +86,8 @@ add_library(obliterator_core STATIC
     include/obliterator/volume.hpp
     include/obliterator/rpc.hpp
     include/obliterator/batch.hpp
+    include/obliterator/shell_cleaner.hpp
+    include/obliterator/usn_journal.hpp
     src/cli.cpp
     src/confidence_engine.cpp
     src/defuse.cpp
@@ -122,6 +124,8 @@ add_library(obliterator_core STATIC
     src/volume.cpp
     src/rpc.cpp
     src/batch.cpp
+    src/shell_cleaner.cpp
+    src/usn_journal.cpp
 )
 
 target_include_directories(obliterator_core PUBLIC

@@ -13,6 +13,7 @@
 #include "obliterator/restore_point.hpp"
 #include "obliterator/resume.hpp"
 #include "obliterator/service.hpp"
+#include "obliterator/shell_cleaner.hpp"
 #include "obliterator/ui.hpp"
 #include "obliterator/uninstaller.hpp"
 #include "obliterator/unlocker.hpp"
@@ -399,13 +400,17 @@ FinalReport execute_obliteration(
     }
 
     // Phase 7: Clean registry
-    if (on_phase) on_phase(7, L"Clean registry keys");
-    emit_log(L"Phase 7: Cleaning registry entries...");
+    if (on_phase) on_phase(7, L"Clean registry keys and shell extensions");
+    emit_log(L"Phase 7: Cleaning registry entries and shell extensions...");
     RegistryCleanReport reg_report;
     auto reg_res = RegistryCleaner::clean(target, reg_report, options.no_backup);
     for (const auto& prof : target_profiles) {
         ProfileManager::clean_profile_registry(prof, target, reg_report, options.no_backup);
     }
+
+    const auto shell_rep = ShellCleaner::clean_shell_extensions(target.root_path, target.name);
+    reg_report.shell_entries_deleted += (shell_rep.clsids_deleted + shell_rep.context_menu_handlers_deleted + shell_rep.icon_overlays_deleted);
+    reg_report.total_keys_deleted += (shell_rep.clsids_deleted + shell_rep.context_menu_handlers_deleted + shell_rep.icon_overlays_deleted);
 
     final_report.uninstall_keys_deleted = reg_report.uninstall_keys_deleted;
     final_report.autorun_values_deleted = reg_report.autorun_values_deleted;

@@ -68,10 +68,28 @@ Windows installations often place large applications, games, and runtime stores 
 
 ## Automation & DevOps Administration
 
-obliterator includes first-class headless protocols for orchestration via PowerShell, Python, Ansible, and Golden Image pipelines:
+obliterator includes first-class headless protocols and tooling for orchestration via PowerShell, Python, Ansible, and Golden Image pipelines:
+
+- **PowerShell Automation Module (`scripts/Obliterator.psd1`)**: Pure PowerShell module integrating obliterator into automated management workflows.
+  ```powershell
+  Import-Module .\scripts\Obliterator.psd1
+  
+  # Search installed apps and inspect metadata
+  Get-ObliteratorApp -Filter "Node.js"
+  
+  # Execute silent obliteration with pipeline support and WhatIf safety checks
+  Get-ObliteratorApp -Filter "Zoom" | Invoke-Obliteration -Quarantine -Force
+  
+  # Inspect quarantine sessions across all volumes and restore
+  Get-ObliteratorSession
+  Restore-ObliteratorSession -SessionId "20261106_Zoom"
+  ```
+  Includes native dynamic tab-completion for installed applications and session identifiers.
 
 - **Headless JSON-RPC / NDJSON Daemon (`--rpc`)**: Runs obliterator as a persistent child process communicating via single-line JSON requests and responses over standard I/O. Supports `ping`, `list_installed`, `scan`, `execute`, `restore`, `list_sessions`, and `diagnose`, streaming real-time event updates (`phase`, `log`) as operations proceed.
 - **Batch Processing (`--batch <file>`)**: Sequentially obliterates a list of applications specified in a plaintext or JSON array file with zero interactive prompts, emitting consolidated batch reports for Sysprep and desktop provisioning.
+- **Direct NTFS USN Journal Scanner**: Rapidly discovers leftover program folders on secondary fixed drives (`D:`, `E:`) by querying the volume Master File Table change journal directly (`FSCTL_ENUM_USN_DATA`), eliminating slow recursive folder tree walks.
+- **COM Shell Extension & Explorer Cleaner**: Discovers and deregisters orphaned inproc COM servers (`InprocServer32`), Shell Context Menu Handlers, and Shell Icon Overlay Identifiers pointing into uninstalled target directories, broadcasting `SHChangeNotify(SHCNE_ASSOCCHANGED, ...)` to prevent Windows Explorer hangs and context menu stutter.
 
 ## What obliterator Does NOT Do
 

@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Custom quarantine destination option (`--quarantine-dir <path>`) with cross-volume discovery in session listings and restore commands.
 - Multi-volume storage delta reporting: exact physical bytes freed per volume (`C:`, `D:`, etc.) tracked before and after execution via `GetDiskFreeSpaceExW` and reported in console output and `--json`.
 - Multi-drive remnant scanner: searches secondary fixed disks for orphaned program folders in standard paths (`D:\Program Files`, `D:\Games`, `D:\Apps`, `D:\SteamLibrary`, `D:\Epic Games`, `D:\GOG Games`).
+- Direct NTFS USN Journal rapid remnant discovery (`UsnJournalScanner`): queries Master File Table change journals directly via `FSCTL_ENUM_USN_DATA` on secondary volumes (`D:`, `E:`) to instantly discover residual directories matching targets without slow recursive directory traversal.
+- COM Shell Extension & Explorer cleaner (`ShellCleaner`): discovers orphaned `InprocServer32` CLSIDs, `ContextMenuHandlers`, and `ShellIconOverlayIdentifiers` pointing to removed DLLs, purges registry hooks, and broadcasts `SHChangeNotify(SHCNE_ASSOCCHANGED, ...)` to prevent Windows Explorer lockups and stutter.
+- Native PowerShell module (`scripts/Obliterator.psd1`, `scripts/Obliterator.psm1`): exposes `Get-ObliteratorApp`, `Invoke-Obliteration`, `Get-ObliteratorSession`, and `Restore-ObliteratorSession` with native pipeline support and tab-completion.
 - Headless JSON-RPC / NDJSON streaming daemon (`--rpc`): provides a streaming control protocol over standard I/O for automation tools, PowerShell, Python, Ansible, and external GUIs with real-time progress events.
 - Batch uninstallation pipeline (`--batch <file>`): non-interactive sequential removal supporting plaintext and JSON input lists with consolidated summary reporting for Golden Image preparation and Sysprep.
 

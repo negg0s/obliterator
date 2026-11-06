@@ -4,6 +4,7 @@
 #include "obliterator/log.hpp"
 #include "obliterator/path.hpp"
 #include "obliterator/safety.hpp"
+#include "obliterator/usn_journal.hpp"
 #include "obliterator/volume.hpp"
 #include "obliterator/wiper.hpp"
 
@@ -235,6 +236,24 @@ std::vector<LeftoverItem> LeftoversCleaner::find_leftovers(const Target& target)
     for (const auto& drv : fixed_drives) {
         if (!sys_drive.empty() && _wcsicmp(drv.c_str(), sys_drive.c_str()) == 0) {
             continue; // System drive directories are handled via environment variables
+        }
+
+        bool usn_handled = false;
+        if (UsnJournalScanner::is_usn_supported(drv)) {
+            auto usn_res = UsnJournalScanner::scan_volume_for_directories(drv, target.name, target.publisher);
+            if (usn_res && !usn_res.value().empty()) {
+                usn_handled = true;
+                for (const auto& uf : usn_res.value()) {
+                    if (SafetyValidator::validate_path(uf.full_path)) {
+                        add_item_unique({uf.full_path, LeftoverKind::Folder, LeftoverConfidence::Definite,
+                                         L"USN journal discovery on secondary volume " + drv});
+                    }
+                }
+            }
+        }
+
+        if (usn_handled) {
+            continue;
         }
 
         const std::wstring secondary_candidate_dirs[] = {

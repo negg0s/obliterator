@@ -34,6 +34,8 @@
 #include "obliterator/volume.hpp"
 #include "obliterator/rpc.hpp"
 #include "obliterator/batch.hpp"
+#include "obliterator/shell_cleaner.hpp"
+#include "obliterator/usn_journal.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
@@ -1817,6 +1819,69 @@ static void test_batch_file_parser() {
     fs::remove(json_file, ec);
 }
 
+static void test_shell_cleaner() {
+    const std::wstring dummy_clsid = L"{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}";
+    const std::wstring clsid_sub = L"SOFTWARE\\Classes\\CLSID\\" + dummy_clsid;
+    const std::wstring inproc_sub = clsid_sub + L"\\InprocServer32";
+    const std::wstring dummy_dll = L"C:\\TestApp\\shell_ext.dll";
+
+    UniqueHKey hInproc;
+    LSTATUS st = RegCreateKeyExW(HKEY_CURRENT_USER, inproc_sub.c_str(), 0, nullptr,
+                                REG_OPTION_NON_VOLATILE, KEY_WRITE | KEY_READ,
+                                nullptr, hInproc.put(), nullptr);
+    check(st == ERROR_SUCCESS, "create dummy InprocServer32 key");
+    RegSetValueExW(hInproc.get(), nullptr, 0, REG_SZ,
+                   reinterpret_cast<const BYTE*>(dummy_dll.c_str()),
+                   static_cast<DWORD>((dummy_dll.size() + 1) * sizeof(wchar_t)));
+    hInproc.reset();
+
+    const std::wstring cm_sub = L"SOFTWARE\\Classes\\Directory\\shellex\\ContextMenuHandlers\\TestAppHandler";
+    UniqueHKey hCm;
+    st = RegCreateKeyExW(HKEY_CURRENT_USER, cm_sub.c_str(), 0, nullptr,
+                         REG_OPTION_NON_VOLATILE, KEY_WRITE | KEY_READ,
+                         nullptr, hCm.put(), nullptr);
+    check(st == ERROR_SUCCESS, "create dummy ContextMenuHandlers key");
+    RegSetValueExW(hCm.get(), nullptr, 0, REG_SZ,
+                   reinterpret_cast<const BYTE*>(dummy_clsid.c_str()),
+                   static_cast<DWORD>((dummy_clsid.size() + 1) * sizeof(wchar_t)));
+    hCm.reset();
+
+    auto exts = ShellCleaner::find_target_shell_extensions(L"C:\\TestApp");
+    bool found_clsid = false;
+    for (const auto& e : exts) {
+        if (_wcsicmp(e.clsid.c_str(), dummy_clsid.c_str()) == 0) {
+            found_clsid = true;
+            break;
+        }
+    }
+    check(found_clsid, "found registered dummy CLSID shell extension");
+
+    auto rep = ShellCleaner::clean_shell_extensions(L"C:\\TestApp");
+    check(rep.clsids_deleted >= 1, "cleaned CLSID key");
+    check(rep.context_menu_handlers_deleted >= 1, "cleaned context menu handler key");
+
+    // Verify keys deleted
+    UniqueHKey hVerify;
+    check(RegOpenKeyExW(HKEY_CURRENT_USER, clsid_sub.c_str(), 0, KEY_READ, hVerify.put()) != ERROR_SUCCESS, "CLSID key deleted from registry");
+    check(RegOpenKeyExW(HKEY_CURRENT_USER, cm_sub.c_str(), 0, KEY_READ, hVerify.put()) != ERROR_SUCCESS, "ContextMenuHandler key deleted from registry");
+}
+
+static void test_usn_journal_scanner() {
+    bool sup = UsnJournalScanner::is_usn_supported(L"C:\\");
+    if (sup) {
+        auto res = UsnJournalScanner::scan_volume_for_directories(L"C:\\", L"Windows");
+        check(res.has_value(), "USN scan succeeds on volume C:");
+        bool found_win = false;
+        for (const auto& f : res.value()) {
+            if (_wcsicmp(f.folder_name.c_str(), L"Windows") == 0) {
+                found_win = true;
+                break;
+            }
+        }
+        check(found_win, "USN scan found Windows directory");
+    }
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -1914,6 +1979,10 @@ int main() {
     test_rpc_server_methods();
     std::wcout << L"[RUN] test_batch_file_parser\n" << std::flush;
     test_batch_file_parser();
+    std::wcout << L"[RUN] test_shell_cleaner\n" << std::flush;
+    test_shell_cleaner();
+    std::wcout << L"[RUN] test_usn_journal_scanner\n" << std::flush;
+    test_usn_journal_scanner();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;
