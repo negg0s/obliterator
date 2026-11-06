@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Image File Execution Options cleaner (`IfeoCleaner`): removes target executable keys in `Image File Execution Options` (`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options`) and scans all IFEO keys to remove lingering `Debugger` interception hooks pointing into uninstalled program directories.
 - Windows Power Request Overrides cleaner (`PowerCleaner`): removes orphaned power execution overrides in `PowerRequestOverrides\PROCESS` (`HKLM\SYSTEM\CurrentControlSet\Control\Power`) to restore normal system sleep, display timeouts, and Modern Standby states.
 - Windows Search RecentApps cleaner (`RecentAppsCleaner`): cleans orphaned `{GUID}` records in `HKCU\Software\Microsoft\Windows\CurrentVersion\Search\RecentApps` referencing uninstalled binaries, clearing phantom entries from the Start Menu and Search history.
+- DirectX and Direct3D GPU preference cleaner (`GpuPreferenceCleaner`): purges orphaned per-application graphics performance registrations in `HKCU\Software\Microsoft\DirectX\UserGpuPreferences`, `HKLM\SOFTWARE\Microsoft\DirectX\UserGpuPreferences`, and `MostRecentApplication` to eliminate dead entries from Windows Graphics Settings.
+- Windows Explorer UserAssist execution history cleaner (`UserAssistCleaner`): decodes ROT-13 encrypted values under `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist\{GUID}\Count` to discover and remove historical execution telemetry for obliterated executables.
+- Windows Volume Mixer and Audio Session cleaner (`AudioCleaner`): cleans orphaned audio session property stores in `HKCU\Software\Microsoft\Internet Explorer\LowRegistry\Audio\PolicyConfig\PropertyStore` and `AppVolume` to remove phantom volume sliders from Windows Volume Mixer.
 
 ## [0.2.0] - 2026-11-04
 

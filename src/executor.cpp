@@ -3,6 +3,7 @@
 #include "obliterator/ads.hpp"
 #include "obliterator/app_compat_cleaner.hpp"
 #include "obliterator/association_cleaner.hpp"
+#include "obliterator/audio_cleaner.hpp"
 #include "obliterator/bits_cleaner.hpp"
 #include "obliterator/cert_cleaner.hpp"
 #include "obliterator/confidence_engine.hpp"
@@ -10,6 +11,7 @@
 #include "obliterator/driver_cleaner.hpp"
 #include "obliterator/error.hpp"
 #include "obliterator/event_log_cleaner.hpp"
+#include "obliterator/gpu_cleaner.hpp"
 #include "obliterator/ifeo_cleaner.hpp"
 #include "obliterator/leftovers.hpp"
 #include "obliterator/log.hpp"
@@ -18,6 +20,7 @@
 #include "obliterator/plan.hpp"
 #include "obliterator/power_cleaner.hpp"
 #include "obliterator/recent_apps_cleaner.hpp"
+#include "obliterator/user_assist_cleaner.hpp"
 #include "obliterator/wer_cleaner.hpp"
 #include "obliterator/wfp_cleaner.hpp"
 #include "obliterator/process.hpp"
@@ -553,6 +556,24 @@ FinalReport execute_obliteration(
     const auto recent_rep = RecentAppsCleaner::clean_recent_apps(target, options.dry_run);
     if (recent_rep.recent_apps_removed > 0) {
         emit_log(L"Cleaned " + std::to_wstring(recent_rep.recent_apps_removed) + L" RecentApps entries.");
+    }
+
+    // Clean DirectX/Direct3D GPU preferences
+    const auto gpu_rep = GpuPreferenceCleaner::clean_gpu_preferences(target, options.dry_run);
+    if (gpu_rep.gpu_preferences_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(gpu_rep.gpu_preferences_removed) + L" GPU preferences.");
+    }
+
+    // Clean Windows Explorer UserAssist execution history
+    const auto ua_rep = UserAssistCleaner::clean_user_assist(target, options.dry_run);
+    if (ua_rep.entries_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(ua_rep.entries_removed) + L" UserAssist history entries.");
+    }
+
+    // Clean WASAPI / Windows Volume Mixer audio sessions
+    const auto audio_rep = AudioCleaner::clean_audio_sessions(target, options.dry_run);
+    if (audio_rep.audio_sessions_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(audio_rep.audio_sessions_removed) + L" audio session records.");
     }
 
     namespace fs = std::filesystem;

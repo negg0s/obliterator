@@ -102,6 +102,9 @@ add_library(obliterator_core STATIC
     include/obliterator/ifeo_cleaner.hpp
     include/obliterator/power_cleaner.hpp
     include/obliterator/recent_apps_cleaner.hpp
+    include/obliterator/gpu_cleaner.hpp
+    include/obliterator/user_assist_cleaner.hpp
+    include/obliterator/audio_cleaner.hpp
     src/cli.cpp
     src/confidence_engine.cpp
     src/defuse.cpp
@@ -154,6 +157,9 @@ add_library(obliterator_core STATIC
     src/ifeo_cleaner.cpp
     src/power_cleaner.cpp
     src/recent_apps_cleaner.cpp
+    src/gpu_cleaner.cpp
+    src/user_assist_cleaner.cpp
+    src/audio_cleaner.cpp
 )
 
 target_include_directories(obliterator_core PUBLIC

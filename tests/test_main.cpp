@@ -50,6 +50,9 @@
 #include "obliterator/ifeo_cleaner.hpp"
 #include "obliterator/power_cleaner.hpp"
 #include "obliterator/recent_apps_cleaner.hpp"
+#include "obliterator/gpu_cleaner.hpp"
+#include "obliterator/user_assist_cleaner.hpp"
+#include "obliterator/audio_cleaner.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
@@ -2252,6 +2255,86 @@ static void test_recent_apps_cleaner() {
     check(s != ERROR_SUCCESS, "mock RecentApps key deleted from registry");
 }
 
+static void test_gpu_cleaner() {
+    Target target;
+    target.name = L"MockGpuApp";
+    target.root_path = L"C:\\Program Files\\MockGpuApp";
+
+    const std::wstring gpu_key = L"Software\\Microsoft\\DirectX\\UserGpuPreferences";
+    UniqueHKey hGpu;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, gpu_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hGpu.put(), nullptr) == ERROR_SUCCESS) {
+        const std::wstring val_name = target.root_path + L"\\app.exe";
+        const std::wstring val_data = L"GpuPreference=2;";
+        RegSetValueExW(hGpu.get(), val_name.c_str(), 0, REG_SZ, reinterpret_cast<const BYTE*>(val_data.c_str()), static_cast<DWORD>((val_data.size() + 1) * sizeof(wchar_t)));
+    }
+
+    auto dry_rep = GpuPreferenceCleaner::clean_gpu_preferences(target, true);
+    check(dry_rep.gpu_preferences_removed >= 1, "GpuPreferenceCleaner dry run detected mock GPU preference");
+
+    auto live_rep = GpuPreferenceCleaner::clean_gpu_preferences(target, false);
+    check(live_rep.gpu_preferences_removed >= 1, "GpuPreferenceCleaner live removed mock GPU preference");
+
+    UniqueHKey hVerify;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, gpu_key.c_str(), 0, KEY_READ, hVerify.put()) == ERROR_SUCCESS) {
+        const std::wstring val_name = target.root_path + L"\\app.exe";
+        LSTATUS st = RegQueryValueExW(hVerify.get(), val_name.c_str(), nullptr, nullptr, nullptr, nullptr);
+        check(st != ERROR_SUCCESS, "mock GPU preference value deleted from registry");
+    }
+}
+
+static void test_user_assist_cleaner() {
+    Target target;
+    target.name = L"MockUaApp";
+    target.root_path = L"C:\\Program Files\\MockUaApp";
+
+    // Test ROT-13 roundtrip
+    const std::wstring orig = L"C:\\Program Files\\MockUaApp\\app.exe";
+    const std::wstring enc = UserAssistCleaner::rot13(orig);
+    check(enc != orig, "rot13 encodes string");
+    check(UserAssistCleaner::rot13(enc) == orig, "rot13 decodes string symmetrically");
+
+    // Setup mock UserAssist key in HKCU
+    const std::wstring ua_key = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\UserAssist\\{MOCK-UA-TEST-GUID}\\Count";
+    UniqueHKey hCount;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, ua_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hCount.put(), nullptr) == ERROR_SUCCESS) {
+        BYTE dummy_data[72] = { 0 };
+        RegSetValueExW(hCount.get(), enc.c_str(), 0, REG_BINARY, dummy_data, sizeof(dummy_data));
+    }
+
+    auto dry_rep = UserAssistCleaner::clean_user_assist(target, true);
+    check(dry_rep.entries_removed >= 1, "UserAssistCleaner dry run detected mock UserAssist entry");
+
+    auto live_rep = UserAssistCleaner::clean_user_assist(target, false);
+    check(live_rep.entries_removed >= 1, "UserAssistCleaner live removed mock UserAssist entry");
+
+    // Cleanup parent mock guid key
+    RegDeleteKeyW(HKEY_CURRENT_USER, ua_key.c_str());
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\UserAssist\\{MOCK-UA-TEST-GUID}");
+}
+
+static void test_audio_cleaner() {
+    Target target;
+    target.name = L"MockAudioApp";
+    target.root_path = L"C:\\Program Files\\MockAudioApp";
+
+    const std::wstring appvol_key = L"Software\\Microsoft\\Multimedia\\Audio\\VolumeControl\\AppVolume\\mockaudioapp.exe";
+    UniqueHKey hAppVol;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, appvol_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hAppVol.put(), nullptr) == ERROR_SUCCESS) {
+        DWORD vol = 100;
+        RegSetValueExW(hAppVol.get(), L"Volume", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&vol), sizeof(DWORD));
+    }
+
+    auto dry_rep = AudioCleaner::clean_audio_sessions(target, true);
+    check(dry_rep.audio_sessions_removed >= 1, "AudioCleaner dry run detected mock AppVolume session");
+
+    auto live_rep = AudioCleaner::clean_audio_sessions(target, false);
+    check(live_rep.audio_sessions_removed >= 1, "AudioCleaner live removed mock AppVolume session");
+
+    UniqueHKey hVerify;
+    LSTATUS s = RegOpenKeyExW(HKEY_CURRENT_USER, appvol_key.c_str(), 0, KEY_READ, hVerify.put());
+    check(s != ERROR_SUCCESS, "mock AppVolume key deleted from registry");
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -2381,6 +2464,12 @@ int main() {
     test_power_cleaner();
     std::wcout << L"[RUN] test_recent_apps_cleaner\n" << std::flush;
     test_recent_apps_cleaner();
+    std::wcout << L"[RUN] test_gpu_cleaner\n" << std::flush;
+    test_gpu_cleaner();
+    std::wcout << L"[RUN] test_user_assist_cleaner\n" << std::flush;
+    test_user_assist_cleaner();
+    std::wcout << L"[RUN] test_audio_cleaner\n" << std::flush;
+    test_audio_cleaner();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;
