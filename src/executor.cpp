@@ -6,7 +6,10 @@
 #include "obliterator/audio_cleaner.hpp"
 #include "obliterator/bits_cleaner.hpp"
 #include "obliterator/cert_cleaner.hpp"
+#include "obliterator/comdlg_cleaner.hpp"
 #include "obliterator/confidence_engine.hpp"
+#include "obliterator/console_cleaner.hpp"
+#include "obliterator/defender_cleaner.hpp"
 #include "obliterator/defuse.hpp"
 #include "obliterator/driver_cleaner.hpp"
 #include "obliterator/error.hpp"
@@ -574,6 +577,27 @@ FinalReport execute_obliteration(
     const auto audio_rep = AudioCleaner::clean_audio_sessions(target, options.dry_run);
     if (audio_rep.audio_sessions_removed > 0) {
         emit_log(L"Cleaned " + std::to_wstring(audio_rep.audio_sessions_removed) + L" audio session records.");
+    }
+
+    // Clean Windows Defender path, process, and CFA exclusions
+    const auto def_rep = DefenderCleaner::clean_defender_exclusions(target, options.dry_run);
+    if (def_rep.path_exclusions_removed > 0 || def_rep.process_exclusions_removed > 0 || def_rep.cfa_allowed_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(def_rep.path_exclusions_removed) + L" Defender path exclusions, " +
+                 std::to_wstring(def_rep.process_exclusions_removed) + L" process exclusions, and " +
+                 std::to_wstring(def_rep.cfa_allowed_removed) + L" CFA entries.");
+    }
+
+    // Clean Common Dialog (ComDlg32) LastVisited and CIDSize MRU
+    const auto comdlg_rep = ComDlgCleaner::clean_comdlg_mru(target, options.dry_run);
+    if (comdlg_rep.last_visited_removed > 0 || comdlg_rep.cid_size_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(comdlg_rep.last_visited_removed) + L" ComDlg LastVisited and " +
+                 std::to_wstring(comdlg_rep.cid_size_removed) + L" CIDSize entries.");
+    }
+
+    // Clean Windows Console host per-application configurations
+    const auto con_rep = ConsoleCleaner::clean_console_settings(target, options.dry_run);
+    if (con_rep.console_configs_removed > 0) {
+        emit_log(L"Cleaned " + std::to_wstring(con_rep.console_configs_removed) + L" Console configurations.");
     }
 
     namespace fs = std::filesystem;

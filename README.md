@@ -104,6 +104,9 @@ obliterator includes first-class headless protocols and tooling for orchestratio
 - **DirectX & Direct3D GPU Preference Cleaner**: Purges orphaned per-application GPU preference entries in `DirectX\UserGpuPreferences` (`HKCU` and `HKLM`), clearing uninstalled apps and games from Windows Graphics Settings.
 - **Windows Explorer UserAssist History Cleaner**: Decodes ROT-13 values in `Explorer\UserAssist\{GUID}\Count` to remove lingering execution telemetry, run counts, and launch records for obliterated binaries.
 - **Windows Volume Mixer Audio Session Cleaner**: Cleans orphaned per-app audio session records in `LowRegistry\Audio\PolicyConfig\PropertyStore` and `AppVolume`, removing phantom volume sliders from Windows Volume Mixer.
+- **Windows Defender & Exploit Guard Exclusion Cleaner**: Scans and removes orphaned path exclusions, process exclusions, and Controlled Folder Access allowed application entries in `HKLM` and `HKCU` pointing to uninstalled programs, preventing security holes from lingering exclusions.
+- **Windows Common Dialog (ComDlg32) MRU Cleaner**: Inspects binary records in `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\ComDlg32\LastVisitedPidlMRU` by extracting wide null-terminated executable names, and purges dialog window geometry cache in `CIDSizeMRU` for uninstalled binaries.
+- **Windows Console Host Settings Cleaner**: Scans per-application console host configurations in `HKCU\Console` using normalized path and executable name matching, purging lingering terminal settings and font customizations for removed binaries.
 
 ## What obliterator Does NOT Do
 

@@ -53,6 +53,9 @@
 #include "obliterator/gpu_cleaner.hpp"
 #include "obliterator/user_assist_cleaner.hpp"
 #include "obliterator/audio_cleaner.hpp"
+#include "obliterator/defender_cleaner.hpp"
+#include "obliterator/comdlg_cleaner.hpp"
+#include "obliterator/console_cleaner.hpp"
 
 #include <crtdbg.h>
 #include <cstdlib>
@@ -2335,6 +2338,115 @@ static void test_audio_cleaner() {
     check(s != ERROR_SUCCESS, "mock AppVolume key deleted from registry");
 }
 
+static void test_defender_cleaner() {
+    Target target;
+    target.name = L"MockDefenderApp";
+    target.root_path = L"C:\\Program Files\\MockDefenderApp";
+
+    // Setup mock exclusions in HKCU
+    const std::wstring paths_key = L"Software\\Microsoft\\Windows Defender\\Exclusions\\Paths";
+    const std::wstring procs_key = L"Software\\Microsoft\\Windows Defender\\Exclusions\\Processes";
+    UniqueHKey hPaths, hProcs;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, paths_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hPaths.put(), nullptr) == ERROR_SUCCESS) {
+        DWORD dwVal = 0;
+        const std::wstring val_name = target.root_path;
+        RegSetValueExW(hPaths.get(), val_name.c_str(), 0, REG_DWORD, reinterpret_cast<const BYTE*>(&dwVal), sizeof(DWORD));
+    }
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, procs_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hProcs.put(), nullptr) == ERROR_SUCCESS) {
+        DWORD dwVal = 0;
+        const std::wstring val_name = L"mockdefenderapp.exe";
+        RegSetValueExW(hProcs.get(), val_name.c_str(), 0, REG_DWORD, reinterpret_cast<const BYTE*>(&dwVal), sizeof(DWORD));
+    }
+
+    auto dry_rep = DefenderCleaner::clean_defender_exclusions(target, true);
+    check(dry_rep.path_exclusions_removed >= 1, "DefenderCleaner dry run detected mock path exclusion");
+    check(dry_rep.process_exclusions_removed >= 1, "DefenderCleaner dry run detected mock process exclusion");
+
+    auto live_rep = DefenderCleaner::clean_defender_exclusions(target, false);
+    check(live_rep.path_exclusions_removed >= 1, "DefenderCleaner live removed mock path exclusion");
+    check(live_rep.process_exclusions_removed >= 1, "DefenderCleaner live removed mock process exclusion");
+
+    // Verify values deleted
+    UniqueHKey hVerify;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, paths_key.c_str(), 0, KEY_READ, hVerify.put()) == ERROR_SUCCESS) {
+        LSTATUS s = RegQueryValueExW(hVerify.get(), target.root_path.c_str(), nullptr, nullptr, nullptr, nullptr);
+        check(s != ERROR_SUCCESS, "mock Defender path exclusion deleted from registry");
+    }
+    hVerify.reset();
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, procs_key.c_str(), 0, KEY_READ, hVerify.put()) == ERROR_SUCCESS) {
+        LSTATUS s = RegQueryValueExW(hVerify.get(), L"mockdefenderapp.exe", nullptr, nullptr, nullptr, nullptr);
+        check(s != ERROR_SUCCESS, "mock Defender process exclusion deleted from registry");
+    }
+
+    // Cleanup keys
+    RegDeleteKeyW(HKEY_CURRENT_USER, paths_key.c_str());
+    RegDeleteKeyW(HKEY_CURRENT_USER, procs_key.c_str());
+}
+
+static void test_comdlg_cleaner() {
+    Target target;
+    target.name = L"MockComDlgApp";
+    target.root_path = L"C:\\Program Files\\MockComDlgApp";
+
+    const std::wstring last_visited_key = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\ComDlg32\\LastVisitedPidlMRU";
+    const std::wstring cid_size_key = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\ComDlg32\\CIDSizeMRU";
+
+    UniqueHKey hLastVisited, hCid;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, last_visited_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hLastVisited.put(), nullptr) == ERROR_SUCCESS) {
+        // Construct binary entry: "mockcomdlgapp.exe\0" followed by some dummy bytes
+        const std::wstring exe_str = L"mockcomdlgapp.exe";
+        std::vector<BYTE> bin_data((exe_str.length() + 1) * sizeof(wchar_t) + 16, 0);
+        std::memcpy(bin_data.data(), exe_str.c_str(), (exe_str.length() + 1) * sizeof(wchar_t));
+        RegSetValueExW(hLastVisited.get(), L"0", 0, REG_BINARY, bin_data.data(), static_cast<DWORD>(bin_data.size()));
+    }
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, cid_size_key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hCid.put(), nullptr) == ERROR_SUCCESS) {
+        BYTE dummy_geom[24] = { 0 };
+        RegSetValueExW(hCid.get(), L"mockcomdlgapp.exe", 0, REG_BINARY, dummy_geom, sizeof(dummy_geom));
+    }
+
+    auto dry_rep = ComDlgCleaner::clean_comdlg_mru(target, true);
+    check(dry_rep.last_visited_removed >= 1, "ComDlgCleaner dry run detected mock LastVisited MRU entry");
+    check(dry_rep.cid_size_removed >= 1, "ComDlgCleaner dry run detected mock CIDSize MRU entry");
+
+    auto live_rep = ComDlgCleaner::clean_comdlg_mru(target, false);
+    check(live_rep.last_visited_removed >= 1, "ComDlgCleaner live removed mock LastVisited MRU entry");
+    check(live_rep.cid_size_removed >= 1, "ComDlgCleaner live removed mock CIDSize MRU entry");
+
+    UniqueHKey hVerify;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, last_visited_key.c_str(), 0, KEY_READ, hVerify.put()) == ERROR_SUCCESS) {
+        LSTATUS s = RegQueryValueExW(hVerify.get(), L"0", nullptr, nullptr, nullptr, nullptr);
+        check(s != ERROR_SUCCESS, "mock LastVisited value deleted from registry");
+    }
+    hVerify.reset();
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, cid_size_key.c_str(), 0, KEY_READ, hVerify.put()) == ERROR_SUCCESS) {
+        LSTATUS s = RegQueryValueExW(hVerify.get(), L"mockcomdlgapp.exe", nullptr, nullptr, nullptr, nullptr);
+        check(s != ERROR_SUCCESS, "mock CIDSize value deleted from registry");
+    }
+}
+
+static void test_console_cleaner() {
+    Target target;
+    target.name = L"MockConsoleApp";
+    target.root_path = L"C:\\Program Files\\MockConsoleApp";
+
+    const std::wstring console_subkey = L"Console\\C:_Program Files_MockConsoleApp_tool.exe";
+    UniqueHKey hCon;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, console_subkey.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, hCon.put(), nullptr) == ERROR_SUCCESS) {
+        DWORD dwSize = 0x00190050;
+        RegSetValueExW(hCon.get(), L"WindowSize", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&dwSize), sizeof(DWORD));
+    }
+
+    auto dry_rep = ConsoleCleaner::clean_console_settings(target, true);
+    check(dry_rep.console_configs_removed >= 1, "ConsoleCleaner dry run detected mock console subkey");
+
+    auto live_rep = ConsoleCleaner::clean_console_settings(target, false);
+    check(live_rep.console_configs_removed >= 1, "ConsoleCleaner live removed mock console subkey");
+
+    UniqueHKey hVerify;
+    LSTATUS s = RegOpenKeyExW(HKEY_CURRENT_USER, console_subkey.c_str(), 0, KEY_READ, hVerify.put());
+    check(s != ERROR_SUCCESS, "mock Console subkey deleted from registry");
+}
+
 int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
@@ -2470,6 +2582,12 @@ int main() {
     test_user_assist_cleaner();
     std::wcout << L"[RUN] test_audio_cleaner\n" << std::flush;
     test_audio_cleaner();
+    std::wcout << L"[RUN] test_defender_cleaner\n" << std::flush;
+    test_defender_cleaner();
+    std::wcout << L"[RUN] test_comdlg_cleaner\n" << std::flush;
+    test_comdlg_cleaner();
+    std::wcout << L"[RUN] test_console_cleaner\n" << std::flush;
+    test_console_cleaner();
 
     std::wcout << L"All tests passed successfully.\n" << std::flush;
     return 0;

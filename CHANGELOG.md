@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DirectX and Direct3D GPU preference cleaner (`GpuPreferenceCleaner`): purges orphaned per-application graphics performance registrations in `HKCU\Software\Microsoft\DirectX\UserGpuPreferences`, `HKLM\SOFTWARE\Microsoft\DirectX\UserGpuPreferences`, and `MostRecentApplication` to eliminate dead entries from Windows Graphics Settings.
 - Windows Explorer UserAssist execution history cleaner (`UserAssistCleaner`): decodes ROT-13 encrypted values under `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist\{GUID}\Count` to discover and remove historical execution telemetry for obliterated executables.
 - Windows Volume Mixer and Audio Session cleaner (`AudioCleaner`): cleans orphaned audio session property stores in `HKCU\Software\Microsoft\Internet Explorer\LowRegistry\Audio\PolicyConfig\PropertyStore` and `AppVolume` to remove phantom volume sliders from Windows Volume Mixer.
+- Windows Defender and Exploit Guard exclusion cleaner (`DefenderCleaner`): scans and removes orphaned path exclusions, process exclusions, and Controlled Folder Access allowed application entries in `HKLM` and `HKCU` pointing to uninstalled programs, preventing security holes from lingering exclusions.
+- Windows Common Dialog (ComDlg32) MRU cleaner (`ComDlgCleaner`): parses binary records in `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\ComDlg32\LastVisitedPidlMRU` by extracting wide null-terminated executable names, and purges dialog window geometry cache in `CIDSizeMRU` for uninstalled binaries.
+- Windows Console Host configuration cleaner (`ConsoleCleaner`): scans per-application console host configurations in `HKCU\Console` using normalized path and executable name matching, purging lingering terminal settings and font customizations for removed binaries.
 
 ## [0.2.0] - 2026-11-04
 
