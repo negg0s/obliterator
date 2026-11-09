@@ -1,5 +1,11 @@
 # obliterator
 
+[![CI](https://github.com/negg0s/obliterator/actions/workflows/ci.yml/badge.svg)](https://github.com/negg0s/obliterator/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/negg0s/obliterator?color=blue)](https://github.com/negg0s/obliterator/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform: Windows x64](https://img.shields.io/badge/Platform-Windows%20x64-0078D6.svg)](https://microsoft.com)
+[![Language: C++20](https://img.shields.io/badge/Language-C%2B%2B20-00599C.svg)](https://isocpp.org)
+
 Windows uninstallers frequently leave behind locked background services, auto-start registry run keys, scheduled watchdog tasks, and gigabytes of orphaned data in hidden profile directories. Most third-party uninstaller utilities hide behind bloated Electron or .NET interfaces that take seconds just to render a list, prompting for wizard confirmations while failing when a process refuses to terminate.
 
 obliterator is a single native C++20 console binary designed to inspect, disarm, and remove stubborn Windows applications and their residual files in milliseconds.
