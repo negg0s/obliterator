@@ -26,6 +26,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Verify repository constraints
+        if: matrix.arch == 'x64'
+        shell: cmd
+        run: python tools/check_constraints.py
+
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
