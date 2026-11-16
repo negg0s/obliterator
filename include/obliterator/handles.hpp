@@ -37,7 +37,8 @@ public:
     }
 
     [[nodiscard]] bool is_valid() const noexcept {
-        return m_handle != nullptr && m_handle != INVALID_HANDLE_VALUE;
+        return m_handle != nullptr && m_handle != INVALID_HANDLE_VALUE &&
+               m_handle != reinterpret_cast<HANDLE>(static_cast<LONG_PTR>(-2));
     }
 
     [[nodiscard]] explicit operator bool() const noexcept {
@@ -98,8 +99,13 @@ public:
         return *this;
     }
 
+    [[nodiscard]] static bool is_predefined_key(HKEY k) noexcept {
+        const auto val = static_cast<DWORD>(reinterpret_cast<ULONG_PTR>(k));
+        return (val >= 0x80000000UL && val <= 0x80000007UL);
+    }
+
     [[nodiscard]] bool is_valid() const noexcept {
-        return m_key != nullptr;
+        return m_key != nullptr && m_key != INVALID_HANDLE_VALUE && !is_predefined_key(m_key);
     }
 
     [[nodiscard]] explicit operator bool() const noexcept {
@@ -118,7 +124,7 @@ public:
 
     void reset(HKEY k = nullptr) noexcept {
         if (m_key != k) {
-            if (m_key != nullptr) {
+            if (is_valid()) {
                 RegCloseKey(m_key);
             }
             m_key = k;
@@ -225,7 +231,8 @@ public:
     }
 
     [[nodiscard]] bool is_valid() const noexcept {
-        return m_handle != nullptr && m_handle != INVALID_HANDLE_VALUE;
+        return m_handle != nullptr && m_handle != INVALID_HANDLE_VALUE &&
+               m_handle != reinterpret_cast<HANDLE>(static_cast<LONG_PTR>(-2));
     }
 
     [[nodiscard]] explicit operator bool() const noexcept {

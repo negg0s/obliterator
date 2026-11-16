@@ -138,6 +138,21 @@ static void test_unique_hkey() {
 
     k2.reset();
     check(!k2.is_valid(), "k2 invalid after reset");
+
+    UniqueHKey pre(HKEY_CURRENT_USER);
+    check(!pre.is_valid(), "predefined hkey should not be considered valid for closing");
+    pre.reset();
+
+    UniqueHKey inv(reinterpret_cast<HKEY>(INVALID_HANDLE_VALUE));
+    check(!inv.is_valid(), "invalid handle hkey is not valid");
+}
+
+static void test_token_and_registry_error_safety() {
+    auto res_invalid = enable_privilege(L"SeNonExistentPrivilege12345");
+    check(!res_invalid.has_value(), "enable_privilege fails gracefully for invalid privilege");
+
+    auto res_del = RegistryCleaner::delete_key_tree(HKEY_CURRENT_USER, L"Software\\ObliteratorNonExistentKey12345");
+    check(res_del.has_value(), "delete_key_tree non-existent key succeeds");
 }
 
 static void test_unique_sc_handle() {
@@ -3021,6 +3036,8 @@ int main() {
     test_unique_handle();
     std::wcout << L"[RUN] test_unique_hkey\n" << std::flush;
     test_unique_hkey();
+    std::wcout << L"[RUN] test_token_and_registry_error_safety\n" << std::flush;
+    test_token_and_registry_error_safety();
     std::wcout << L"[RUN] test_unique_sc_handle\n" << std::flush;
     test_unique_sc_handle();
     std::wcout << L"[RUN] test_win32_error_and_result\n" << std::flush;

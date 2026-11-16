@@ -111,8 +111,14 @@ Result<void> LoadedHiveGuard::unload() {
 
 std::wstring ProfileManager::get_current_user_sid() {
     UniqueHandle token;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, token.put())) {
-        return {};
+    if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, token.put())) {
+        if (GetLastError() == ERROR_NO_TOKEN) {
+            if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, token.put())) {
+                return {};
+            }
+        } else {
+            return {};
+        }
     }
 
     DWORD needed = 0;

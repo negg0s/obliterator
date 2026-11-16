@@ -283,11 +283,11 @@ Result<std::wstring> RegistryBackup::export_key(HKEY root, const std::wstring& s
 
     if (CreateProcessW(nullptr, cmd_buf.data(), nullptr, nullptr, FALSE,
                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-        WaitForSingleObject(pi.hProcess, 3000);
+        UniqueHandle proc_handle(pi.hProcess);
+        UniqueHandle thread_handle(pi.hThread);
+        WaitForSingleObject(proc_handle.get(), 3000);
         DWORD exit_code = 1;
-        GetExitCodeProcess(pi.hProcess, &exit_code);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
+        GetExitCodeProcess(proc_handle.get(), &exit_code);
 
         if (exit_code == 0 && std::filesystem::exists(file_path, ec) && !ec) {
             return file_path;
@@ -438,7 +438,11 @@ Result<void> RegistryCleaner::delete_key_tree(HKEY root, const std::wstring& sub
         if (status != ERROR_SUCCESS) {
             break;
         }
-        delete_key_tree(key.get(), child_name, sam);
+        auto child_res = delete_key_tree(key.get(), child_name, sam);
+        if (!child_res) {
+            key.reset();
+            return child_res;
+        }
     }
     key.reset();
 
@@ -816,6 +820,8 @@ Result<void> RegistryCleaner::clean(const Target& target, RegistryCleanReport& r
             } else {
                 report.failed_items.push_back(ar.subkey_path + L"\\" + ar.value_name);
             }
+        } else {
+            report.failed_items.push_back(ar.subkey_path + L"\\" + ar.value_name);
         }
     }
 

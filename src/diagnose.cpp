@@ -123,9 +123,11 @@ Result<std::wstring> SystemDiagnostics::collect_report() {
 
     // 2. Token Elevation and Process Privileges
     oss << L"[Process Privileges and Elevation]\n";
-    HANDLE hTokenRaw = INVALID_HANDLE_VALUE;
-    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hTokenRaw)) {
-        UniqueHandle hToken(hTokenRaw);
+    UniqueHandle hToken;
+    if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, hToken.put())) {
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, hToken.put());
+    }
+    if (hToken.is_valid()) {
         TOKEN_ELEVATION elevation{};
         DWORD ret_len = 0;
         if (GetTokenInformation(hToken.get(), TokenElevation, &elevation, sizeof(elevation), &ret_len)) {

@@ -33,8 +33,15 @@ static Result<void> adjust_token_privilege(HANDLE token, const wchar_t* privileg
 
 Result<void> enable_privilege(const wchar_t* privilege_name) {
     UniqueHandle token;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, token.put())) {
-        return Win32Error::last();
+    if (!OpenThreadToken(GetCurrentThread(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, FALSE, token.put())) {
+        const DWORD err = GetLastError();
+        if (err == ERROR_NO_TOKEN) {
+            if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, token.put())) {
+                return Win32Error::last();
+            }
+        } else {
+            return Win32Error::from_code(err);
+        }
     }
 
     return adjust_token_privilege(token.get(), privilege_name);
@@ -42,8 +49,15 @@ Result<void> enable_privilege(const wchar_t* privilege_name) {
 
 Result<void> enable_required_privileges() {
     UniqueHandle token;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, token.put())) {
-        return Win32Error::last();
+    if (!OpenThreadToken(GetCurrentThread(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, FALSE, token.put())) {
+        const DWORD err = GetLastError();
+        if (err == ERROR_NO_TOKEN) {
+            if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, token.put())) {
+                return Win32Error::last();
+            }
+        } else {
+            return Win32Error::from_code(err);
+        }
     }
 
     constexpr std::array<const wchar_t*, 4> privileges = {
