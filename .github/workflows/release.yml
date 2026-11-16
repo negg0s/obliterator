@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            cmake_arch: x64
+          - arch: arm64
+            cmake_arch: ARM64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -A ${{ matrix.cmake_arch }}
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Create release zip
+        shell: powershell
+        run: |
+          $staging = "obliterator-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Path $staging
+          Copy-Item "build/Release/obliterator.exe" -Destination "$staging/obliterator.exe"
+          if (Test-Path "README.md") { Copy-Item "README.md" -Destination $staging }
+          if (Test-Path "LICENSE") { Copy-Item "LICENSE" -Destination $staging }
+          if (Test-Path "CHANGELOG.md") { Copy-Item "CHANGELOG.md" -Destination $staging }
+          Compress-Archive -Path "$staging/*" -DestinationPath "obliterator-${{ matrix.arch }}.zip"
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: obliterator-${{ matrix.arch }}
+          path: obliterator-${{ matrix.arch }}.zip
+
+  publish:
+    name: Publish Release
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Organize release files and checksums
+        shell: powershell
+        run: |
+          Get-ChildItem -Path artifacts -Recurse -Filter "*.zip" | ForEach-Object {
+            Copy-Item $_.FullName .
+          }
+          Get-FileHash -Algorithm SHA256 *.zip | ForEach-Object {
+            "$($_.Hash.ToLower())  $([System.IO.Path]::GetFileName($_.Path))"
+          } | Set-Content -Path "checksums-sha256.txt" -Encoding utf8
+          Get-Content "checksums-sha256.txt"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.zip
+            checksums-sha256.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
