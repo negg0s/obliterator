@@ -38,16 +38,22 @@ std::wstring PathHelper::normalize(std::wstring_view path) {
         return {};
     }
     std::wstring expanded(static_cast<size_t>(expanded_len), L'\0');
-    ExpandEnvironmentStringsW(input.c_str(), expanded.data(), expanded_len);
-    expanded.resize(expanded_len - 1);
+    const DWORD exp_written = ExpandEnvironmentStringsW(input.c_str(), expanded.data(), expanded_len);
+    if (exp_written == 0 || exp_written > expanded_len) {
+        return {};
+    }
+    expanded.resize(exp_written - 1);
 
     const DWORD full_len = GetFullPathNameW(expanded.c_str(), 0, nullptr, nullptr);
     if (full_len == 0) {
         return {};
     }
     std::wstring full(static_cast<size_t>(full_len), L'\0');
-    GetFullPathNameW(expanded.c_str(), full_len, full.data(), nullptr);
-    full.resize(full_len - 1);
+    const DWORD written = GetFullPathNameW(expanded.c_str(), full_len, full.data(), nullptr);
+    if (written == 0 || written >= full_len) {
+        return {};
+    }
+    full.resize(written);
 
     std::replace(full.begin(), full.end(), L'/', L'\\');
 
