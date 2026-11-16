@@ -102,11 +102,11 @@ bool RecoveryDefuser::disable_task(const std::wstring& task_name) {
         si.wShowWindow = SW_HIDE;
         PROCESS_INFORMATION pi{};
         if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-            WaitForSingleObject(pi.hProcess, 3000);
+            UniqueHandle proc_handle(pi.hProcess);
+            UniqueHandle thread_handle(pi.hThread);
+            WaitForSingleObject(proc_handle.get(), 3000);
             DWORD exit_code = 1;
-            GetExitCodeProcess(pi.hProcess, &exit_code);
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
+            GetExitCodeProcess(proc_handle.get(), &exit_code);
             if (exit_code == 0) {
                 disabled = true;
             }

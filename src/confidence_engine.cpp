@@ -538,8 +538,12 @@ std::vector<ScoredArtifact> ConfidenceEngine::discover_artifacts(
                 DWORD ap_len = 256;
                 while (true) {
                     ap_len = 256;
-                    if (RegEnumKeyExW(ap_key.get(), idx++, ap_name, &ap_len, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) {
+                    LSTATUS enum_st = RegEnumKeyExW(ap_key.get(), idx++, ap_name, &ap_len, nullptr, nullptr, nullptr, nullptr);
+                    if (enum_st == ERROR_NO_MORE_ITEMS) {
                         break;
+                    }
+                    if (enum_st != ERROR_SUCCESS) {
+                        continue;
                     }
                     std::wstring subkey_full = std::wstring(app_paths_sub) + L"\\" + ap_name;
                     UniqueHKey sub_h;
@@ -571,8 +575,12 @@ std::vector<ScoredArtifact> ConfidenceEngine::discover_artifacts(
             DWORD val_len = MAX_PATH * 2;
             while (true) {
                 val_len = MAX_PATH * 2;
-                if (RegEnumValueW(mui_key.get(), idx++, val_name, &val_len, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) {
+                LSTATUS enum_st = RegEnumValueW(mui_key.get(), idx++, val_name, &val_len, nullptr, nullptr, nullptr, nullptr);
+                if (enum_st == ERROR_NO_MORE_ITEMS) {
                     break;
+                }
+                if (enum_st != ERROR_SUCCESS) {
+                    continue;
                 }
                 std::wstring v_name = val_name;
                 if (PathHelper::contains_path_reference(v_name, target.root_path)) {

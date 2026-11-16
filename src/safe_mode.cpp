@@ -21,11 +21,12 @@ static bool run_system_command(const std::wstring& cmd) {
         return false;
     }
 
-    WaitForSingleObject(pi.hProcess, 10000);
+    UniqueHandle proc_handle(pi.hProcess);
+    UniqueHandle thread_handle(pi.hThread);
+
+    WaitForSingleObject(proc_handle.get(), 10000);
     DWORD exit_code = 1;
-    GetExitCodeProcess(pi.hProcess, &exit_code);
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
+    GetExitCodeProcess(proc_handle.get(), &exit_code);
 
     return exit_code == 0;
 }

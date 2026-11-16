@@ -228,29 +228,25 @@ UnlockReport FileUnlocker::release_locks(const std::wstring& target_root_path,
             for (const auto& entry : std::filesystem::recursive_directory_iterator(
                      norm_target, std::filesystem::directory_options::skip_permission_denied, ec)) {
                 if (entry.is_regular_file(ec)) {
-                    HANDLE h = CreateFileW(entry.path().c_str(), GENERIC_READ, 0, nullptr,
-                                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-                    if (h == INVALID_HANDLE_VALUE) {
+                    UniqueHandle h(CreateFileW(entry.path().c_str(), GENERIC_READ, 0, nullptr,
+                                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+                    if (!h.is_valid()) {
                         const DWORD err = GetLastError();
                         if (err == ERROR_SHARING_VIOLATION || err == ERROR_LOCK_VIOLATION) {
                             has_locked_files = true;
                             break;
                         }
-                    } else {
-                        CloseHandle(h);
                     }
                 }
             }
         } else {
-            HANDLE h = CreateFileW(norm_target.c_str(), GENERIC_READ, 0, nullptr,
-                                   OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (h == INVALID_HANDLE_VALUE) {
+            UniqueHandle h(CreateFileW(norm_target.c_str(), GENERIC_READ, 0, nullptr,
+                                       OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+            if (!h.is_valid()) {
                 const DWORD err = GetLastError();
                 if (err == ERROR_SHARING_VIOLATION || err == ERROR_LOCK_VIOLATION) {
                     has_locked_files = true;
                 }
-            } else {
-                CloseHandle(h);
             }
         }
     }

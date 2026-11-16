@@ -285,7 +285,11 @@ Result<std::wstring> RegistryBackup::export_key(HKEY root, const std::wstring& s
                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
         UniqueHandle proc_handle(pi.hProcess);
         UniqueHandle thread_handle(pi.hThread);
-        WaitForSingleObject(proc_handle.get(), 3000);
+        DWORD wait_res = WaitForSingleObject(proc_handle.get(), 3000);
+        if (wait_res == WAIT_TIMEOUT) {
+            TerminateProcess(proc_handle.get(), 1);
+            WaitForSingleObject(proc_handle.get(), 1000);
+        }
         DWORD exit_code = 1;
         GetExitCodeProcess(proc_handle.get(), &exit_code);
 
@@ -436,7 +440,8 @@ Result<void> RegistryCleaner::delete_key_tree(HKEY root, const std::wstring& sub
             break;
         }
         if (status != ERROR_SUCCESS) {
-            break;
+            key.reset();
+            return Win32Error::from_code(status);
         }
         auto child_res = delete_key_tree(key.get(), child_name, sam);
         if (!child_res) {
@@ -449,6 +454,9 @@ Result<void> RegistryCleaner::delete_key_tree(HKEY root, const std::wstring& sub
     const size_t slash_pos = subkey.rfind(L'\\');
     if (slash_pos == std::wstring::npos) {
         status = RegDeleteKeyExW(root, subkey.c_str(), sam, 0);
+        if (status != ERROR_SUCCESS && status != ERROR_FILE_NOT_FOUND) {
+            status = RegDeleteKeyW(root, subkey.c_str());
+        }
     } else {
         const std::wstring parent = subkey.substr(0, slash_pos);
         const std::wstring leaf = subkey.substr(slash_pos + 1);
@@ -456,6 +464,9 @@ Result<void> RegistryCleaner::delete_key_tree(HKEY root, const std::wstring& sub
         status = RegOpenKeyExW(root, parent.c_str(), 0, KEY_WRITE | sam, parent_key.put());
         if (status == ERROR_SUCCESS) {
             status = RegDeleteKeyExW(parent_key.get(), leaf.c_str(), sam, 0);
+            if (status != ERROR_SUCCESS && status != ERROR_FILE_NOT_FOUND) {
+                status = RegDeleteKeyW(parent_key.get(), leaf.c_str());
+            }
         }
     }
 
